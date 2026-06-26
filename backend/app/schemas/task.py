@@ -26,6 +26,7 @@ class TaskCreate(BaseModel):
     sprint_id: str | None = None
     story_points: int | None = None
     due_date: datetime | None = None
+    board_id: str | None = None  # defaults to the Default board
 
 
 class TaskUpdate(BaseModel):

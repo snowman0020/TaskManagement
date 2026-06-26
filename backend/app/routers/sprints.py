@@ -7,6 +7,7 @@ from app.core.deps import get_current_user, require_manager
 from app.database import get_db
 from app.schemas.common import oid, serialize, serialize_list
 from app.schemas.sprint import SprintCreate, SprintGenerate, SprintUpdate
+from app.services.access import ensure_board_access, resolve_board_id
 from app.services.notifications import notify
 from app.services.sprint_service import build_sprints, sprint_end_date, working_days
 
@@ -24,21 +25,26 @@ def _snap_to_monday(d: date) -> date:
 
 
 @router.get("")
-async def list_sprints(_=Depends(get_current_user)):
-    docs = await get_db().sprints.find().sort("start_date", 1).to_list(500)
+async def list_sprints(board_id: str | None = None, current=Depends(get_current_user)):
+    board_id = await resolve_board_id(board_id)
+    await ensure_board_access(board_id, current)
+    docs = await get_db().sprints.find({"board_id": board_id}).sort("start_date", 1).to_list(500)
     return serialize_list(docs)
 
 
 @router.post("", status_code=201)
-async def create_sprint(payload: SprintCreate, _=Depends(require_manager)):
+async def create_sprint(payload: SprintCreate, current=Depends(require_manager)):
     db = get_db()
-    if await db.sprints.find_one({"name": payload.name}):
+    board_id = await resolve_board_id(payload.board_id)
+    await ensure_board_access(board_id, current)
+    if await db.sprints.find_one({"name": payload.name, "board_id": board_id}):
         raise HTTPException(status_code=409, detail="Sprint name already exists")
     # sprint_end_date assumes a Monday start; snap so end lands on a Friday
     start = _snap_to_monday(payload.start_date)
     end = sprint_end_date(start, payload.weeks)
     doc = {
         "name": payload.name,
+        "board_id": board_id,
         "start_date": _to_dt(start),
         "end_date": _to_dt(end, end_of_day=True),
         "working_days": working_days(start, end),
@@ -53,9 +59,11 @@ async def create_sprint(payload: SprintCreate, _=Depends(require_manager)):
 
 
 @router.post("/generate", status_code=201)
-async def generate_sprints(payload: SprintGenerate, _=Depends(require_manager)):
+async def generate_sprints(payload: SprintGenerate, current=Depends(require_manager)):
     """Auto-create consecutive 2-week (Mon-Fri) sprints."""
     db = get_db()
+    board_id = await resolve_board_id(payload.board_id)
+    await ensure_board_access(board_id, current)
     sprints = build_sprints(
         payload.start_date,
         payload.count,
@@ -63,15 +71,16 @@ async def generate_sprints(payload: SprintGenerate, _=Depends(require_manager)):
         payload.name_prefix,
         payload.manday,
     )
-    # continue numbering past any existing "<prefix> N" sprints so repeated
-    # calls extend the schedule instead of silently colliding on the unique name.
+    # continue numbering past existing "<prefix> N" sprints ON THIS BOARD so
+    # repeated calls extend the schedule instead of colliding on the name.
     base = await db.sprints.count_documents(
-        {"name": {"$regex": rf"^{re.escape(payload.name_prefix)} \d+$"}}
+        {"board_id": board_id, "name": {"$regex": rf"^{re.escape(payload.name_prefix)} \d+$"}}
     )
     created, skipped = [], []
     for offset, s in enumerate(sprints, start=base):
         s["name"] = f"{payload.name_prefix} {offset + 1}"
-        if await db.sprints.find_one({"name": s["name"]}):
+        s["board_id"] = board_id
+        if await db.sprints.find_one({"name": s["name"], "board_id": board_id}):
             skipped.append(s["name"])
             continue
         res = await db.sprints.insert_one(s)
@@ -105,7 +114,9 @@ async def complete_sprint(sprint_id: str, current=Depends(require_manager)):
     if not sprint:
         raise HTTPException(status_code=404, detail="Sprint not found")
 
-    cols = await db.status_columns.find().sort("order", 1).to_list(100)
+    cols = await db.status_columns.find(
+        {"board_id": sprint.get("board_id")}
+    ).sort("order", 1).to_list(100)
     done_keys = [c["key"] for c in cols if c.get("is_done")]
     if not done_keys and cols:
         done_keys = [cols[-1]["key"]]  # fallback: treat the last column as done
@@ -118,10 +129,17 @@ async def complete_sprint(sprint_id: str, current=Depends(require_manager)):
     )
     sprint = await db.sprints.find_one({"_id": oid(sprint_id)})
 
-    # tell everyone the sprint wrapped up
-    users = await db.users.find({"is_active": True}).to_list(1000)
+    # notify the board's members (the default board is open, so notify everyone)
+    board = None
+    if sprint.get("board_id"):
+        board = await db.boards.find_one({"_id": oid(sprint["board_id"])})
+    if board and not board.get("is_default") and board.get("member_ids"):
+        recipients = board["member_ids"]
+    else:
+        users = await db.users.find({"is_active": True}).to_list(1000)
+        recipients = [str(u["_id"]) for u in users]
     await notify(
-        [str(u["_id"]) for u in users],
+        recipients,
         "sprint_complete",
         f"{current.get('username')} completed sprint {sprint['name']}",
         actor_id=str(current["_id"]),

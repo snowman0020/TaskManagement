@@ -6,17 +6,16 @@ from app.core.deps import get_current_user, require_member
 from app.database import get_db, next_sequence
 from app.schemas.common import oid, serialize, serialize_list
 from app.schemas.task import TaskCreate, TaskMove, TaskReorder, TaskUpdate
+from app.services.access import ensure_board_access, resolve_board_id
 from app.services.notifications import notify
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
-TASK_PREFIX = "TASK"
 
-
-async def _status_context() -> tuple[str, str, set[str]]:
-    """Return (first_status_key, done_status_key, {valid_keys})."""
+async def _status_context(board_id: str) -> tuple[str, str, set[str]]:
+    """Return (first_status_key, done_status_key, {valid_keys}) for a board."""
     db = get_db()
-    cols = await db.status_columns.find().sort("order", 1).to_list(100)
+    cols = await db.status_columns.find({"board_id": board_id}).sort("order", 1).to_list(100)
     if not cols:
         return "TODO", "Done", {"TODO", "InProgress", "QA", "Done"}
     first = cols[0]["key"]
@@ -55,8 +54,8 @@ async def _log_move(task: dict, from_status: str, to_status: str, user: dict) ->
         pass
 
 
-async def _status_name(key: str) -> str:
-    col = await get_db().status_columns.find_one({"key": key})
+async def _status_name(key: str, board_id: str) -> str:
+    col = await get_db().status_columns.find_one({"key": key, "board_id": board_id})
     return col["name"] if col else key
 
 
@@ -64,7 +63,7 @@ async def _notify_move(task: dict, new_status: str, assignee: str | None, actor:
     """Tell a task's assignee it was moved (the actor never notifies themselves)."""
     if not assignee:
         return
-    name = await _status_name(new_status)
+    name = await _status_name(new_status, task.get("board_id"))
     await notify(
         [assignee],
         "move",
@@ -89,9 +88,12 @@ async def list_tasks(
     status: str | None = None,
     sprint_id: str | None = None,
     assignee_id: str | None = None,
-    _=Depends(get_current_user),
+    board_id: str | None = None,
+    current=Depends(get_current_user),
 ):
-    query: dict = {}
+    board_id = await resolve_board_id(board_id)
+    await ensure_board_access(board_id, current)
+    query: dict = {"board_id": board_id}
     if status:
         query["status"] = status
     if sprint_id:
@@ -108,16 +110,20 @@ async def list_tasks(
 async def board(
     sprint_id: str | None = Query(default=None),
     assignee_id: str | None = Query(default=None),
-    _=Depends(get_current_user),
+    board_id: str | None = Query(default=None),
+    current=Depends(get_current_user),
 ):
     """Return columns + tasks grouped by status, ready for the Kanban board.
 
     `assignee_id` filters to one person's tasks; the sentinel "none" returns
     tasks with no assignee. `sprint_id="none"` returns Backlog (no sprint).
+    Everything is scoped to `board_id` (the Default board when omitted).
     """
     db = get_db()
-    cols = await db.status_columns.find().sort("order", 1).to_list(100)
-    query: dict = {}
+    board_id = await resolve_board_id(board_id)
+    await ensure_board_access(board_id, current)
+    cols = await db.status_columns.find({"board_id": board_id}).sort("order", 1).to_list(100)
+    query: dict = {"board_id": board_id}
     if sprint_id == "none":
         query["sprint_id"] = None  # Backlog — matches null or missing
     elif sprint_id:
@@ -140,22 +146,28 @@ async def board(
 @router.post("", status_code=201)
 async def create_task(payload: TaskCreate, current=Depends(require_member)):
     db = get_db()
-    first_status, done_status, valid = await _status_context()
+    board_id = await resolve_board_id(payload.board_id)
+    board = await ensure_board_access(board_id, current)
+
+    first_status, done_status, valid = await _status_context(board_id)
     status = payload.status or first_status
     _ensure_valid_status(status, valid)
 
-    seq = await next_sequence("task")
-    task_number = f"{TASK_PREFIX}-{seq}"
+    # running number is per board: <board prefix>-<board counter>
+    prefix = board.get("prefix", "TASK")
+    seq = await next_sequence(f"task:{board_id}")
+    task_number = f"{prefix}-{seq}"
 
     # place the new task at the TOP of its column: one below the current minimum
-    # order in the same column (status + sprint), consistent with the 0..N
-    # integer scheme written by the bulk-reorder endpoint.
-    col_query = {"status": status, "sprint_id": payload.sprint_id}
+    # order in the same column (board + status + sprint), consistent with the
+    # 0..N integer scheme written by the bulk-reorder endpoint.
+    col_query = {"board_id": board_id, "status": status, "sprint_id": payload.sprint_id}
     top = await db.tasks.find(col_query).sort("order", 1).limit(1).to_list(1)
     order = (top[0]["order"] - 1) if top else 0
 
     doc = {
         "task_number": task_number,
+        "board_id": board_id,
         "title": payload.title,
         "description": payload.description,
         "status": status,
@@ -174,7 +186,7 @@ async def create_task(payload: TaskCreate, current=Depends(require_member)):
     }
     # stamp started_at/done_at when a task is created directly in a non-first /
     # done column so leadtime & cycle-time metrics stay accurate.
-    await _apply_status_timestamps(doc, status, doc)
+    await _apply_status_timestamps(doc, status, doc, board_id)
     res = await db.tasks.insert_one(doc)
     doc["_id"] = res.inserted_id
     # notify the assignee if the task is created already assigned to someone else
@@ -191,9 +203,9 @@ async def get_task(task_id: str, _=Depends(get_current_user)):
     return serialize(doc)
 
 
-async def _apply_status_timestamps(task: dict, new_status: str, update: dict) -> None:
+async def _apply_status_timestamps(task: dict, new_status: str, update: dict, board_id: str) -> None:
     """Record started_at / done_at for leadtime metrics on status change."""
-    first_status, done_status, _valid = await _status_context()
+    first_status, done_status, _valid = await _status_context(board_id)
     # only stamp started_at for genuine in-progress columns (not a straight
     # first -> done jump, which would make cycle time meaninglessly ~0)
     if (
@@ -215,6 +227,7 @@ async def update_task(task_id: str, payload: TaskUpdate, current=Depends(require
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
+    board_id = task.get("board_id")
     data = payload.model_dump(exclude_unset=True)
     update = {k: v for k, v in data.items()}
     status_changed = "status" in data and data["status"] != task.get("status")
@@ -225,9 +238,9 @@ async def update_task(task_id: str, payload: TaskUpdate, current=Depends(require
         and data["assignee_id"] != task.get("assignee_id")
     )
     if status_changed:
-        _, _done, valid = await _status_context()
+        _, _done, valid = await _status_context(board_id)
         _ensure_valid_status(update["status"], valid)
-        await _apply_status_timestamps(task, update["status"], update)
+        await _apply_status_timestamps(task, update["status"], update, board_id)
     update["updated_at"] = _now()
 
     res = await db.tasks.find_one_and_update(
@@ -249,12 +262,13 @@ async def move_task(task_id: str, payload: TaskMove, current=Depends(require_mem
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    _, _done, valid = await _status_context()
+    board_id = task.get("board_id")
+    _, _done, valid = await _status_context(board_id)
     _ensure_valid_status(payload.status, valid)
 
     update: dict = {"status": payload.status, "order": payload.order, "updated_at": _now()}
     if payload.status != task.get("status"):
-        await _apply_status_timestamps(task, payload.status, update)
+        await _apply_status_timestamps(task, payload.status, update, board_id)
 
     res = await db.tasks.find_one_and_update(
         {"_id": oid(task_id)}, {"$set": update}, return_document=True
@@ -269,13 +283,13 @@ async def move_task(task_id: str, payload: TaskMove, current=Depends(require_mem
 async def reorder_tasks(payload: TaskReorder, current=Depends(require_member)):
     """Persist a batch of order/status changes after a drag-and-drop drop."""
     db = get_db()
-    _, _done, valid = await _status_context()
-    for item in payload.items:
-        _ensure_valid_status(item.status, valid)
     for item in payload.items:
         task = await db.tasks.find_one({"_id": oid(item.id)})
         if not task:
             continue
+        board_id = task.get("board_id")
+        _, _done, valid = await _status_context(board_id)
+        _ensure_valid_status(item.status, valid)
         update: dict = {
             "status": item.status,
             "order": item.order,
@@ -283,7 +297,7 @@ async def reorder_tasks(payload: TaskReorder, current=Depends(require_member)):
         }
         moved = item.status != task.get("status")
         if moved:
-            await _apply_status_timestamps(task, item.status, update)
+            await _apply_status_timestamps(task, item.status, update, board_id)
         await db.tasks.update_one({"_id": oid(item.id)}, {"$set": update})
         if moved:
             await _log_move(task, task.get("status"), item.status, current)

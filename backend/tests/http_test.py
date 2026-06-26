@@ -264,6 +264,29 @@ async def main():
         assert (await c.get("/api/notifications", headers=mh)).json()["unread"] == 0
         print("✓ notifications: assign/move/sprint_complete delivered, actor skipped, read-all clears")
 
+        # multi-board: a second board with its own prefix + start number, isolated
+        boards = (await c.get("/api/boards", headers=h)).json()
+        assert any(b.get("is_default") for b in boards), boards
+        nb = (await c.post("/api/boards", json={
+            "name": "Beta", "prefix": "BETA", "start_number": 100, "member_ids": [bid],
+        }, headers=h)).json()
+        nbid = nb["id"]
+        # the new board gets its own seeded columns
+        bcols = (await c.get(f"/api/status-columns?board_id={nbid}", headers=h)).json()
+        assert {col["key"] for col in bcols} == {"TODO", "InProgress", "QA", "Done"}, bcols
+        # a task created in the board starts at the configured number with the prefix
+        bt = (await c.post("/api/tasks", json={"title": "first beta", "board_id": nbid}, headers=h)).json()
+        assert bt["task_number"] == "BETA-100", bt
+        assert bt["board_id"] == nbid
+        # the board view shows only the board's tasks
+        bv = (await c.get(f"/api/tasks/board?board_id={nbid}", headers=h)).json()
+        bv_ids = [t["id"] for col in bv["tasks"].values() for t in col]
+        assert bt["id"] in bv_ids and t1["id"] not in bv_ids
+        # a non-member is denied; a member and admin are allowed
+        assert (await c.get(f"/api/tasks/board?board_id={nbid}", headers=vh)).status_code == 403
+        assert (await c.get(f"/api/tasks/board?board_id={nbid}", headers=mh)).status_code == 200
+        print("✓ multi-board: per-board prefix/start, isolated tasks+columns, membership 403")
+
         # admin cannot demote/lock out the last admin
         me = (await c.get("/api/auth/me", headers=h)).json()
         lock = await c.patch(f"/api/users/{me['id']}", json={"role": "viewer"}, headers=h)

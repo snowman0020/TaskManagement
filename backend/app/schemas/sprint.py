@@ -10,6 +10,7 @@ class SprintCreate(BaseModel):
     goal: str = ""
     weeks: int = Field(default=2, ge=1, le=4)  # sprint length in weeks
     manday: float | None = Field(default=None, ge=0)  # planned capacity (man-days)
+    board_id: str | None = None  # defaults to the Default board
 
 
 class SprintGenerate(BaseModel):
@@ -19,6 +20,7 @@ class SprintGenerate(BaseModel):
     weeks: int = Field(default=2, ge=1, le=4)
     name_prefix: str = "Sprint"
     manday: float | None = Field(default=None, ge=0)  # default applied to all
+    board_id: str | None = None  # defaults to the Default board
 
 
 class SprintUpdate(BaseModel):
@@ -34,6 +36,7 @@ class StatusColumnCreate(BaseModel):
     order: int = 0
     wip_limit: int | None = None
     is_done: bool = False  # marks the column that completes a task (for leadtime)
+    board_id: str | None = None  # defaults to the Default board
 
 
 class StatusColumnUpdate(BaseModel):
