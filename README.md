@@ -1,29 +1,56 @@
-# TaskFlow — Task Management System
+# TaskFlow — Task Management System / ระบบจัดการงาน
 
-A full-stack Kanban-style task management system with sprints, roles, drag-and-drop,
-and a lead-time dashboard.
+A full-stack, multi-board Kanban task management system with sprints, roles, drag-and-drop,
+image attachments, comments, notifications, a lead-time dashboard, dark mode, and a
+responsive UI.
 
-| Layer    | Tech                                        |
-|----------|---------------------------------------------|
-| Database | **MongoDB** 7                               |
-| Backend  | **Python** · FastAPI · Motor (async) · JWT  |
+ระบบจัดการงานแบบ Kanban full-stack รองรับหลาย board, sprint, สิทธิ์ผู้ใช้, ลาก-วาง,
+แนบรูป, คอมเมนต์, แจ้งเตือน, dashboard lead-time, dark mode และ responsive
+
+| Layer    | Tech                                                 |
+|----------|------------------------------------------------------|
+| Database | **MongoDB** 7 (+ GridFS for images)                  |
+| Backend  | **Python** · FastAPI · Motor (async) · JWT           |
 | Frontend | **Vue 3** · Vite · Pinia · Vue Router · vuedraggable |
 
-## Features
+## Features / ฟังก์ชันทั้งหมด
 
-1. **MongoDB** persistence (async via Motor) with auto-created indexes.
-2. **Vue 3** SPA frontend (Vite + Pinia + Vue Router).
-3. **Python / FastAPI** REST backend.
-4. **Login system** — JWT auth, login by username *or* email.
-5. **Running task numbers** — atomic counter produces `TASK-1`, `TASK-2`, …
-6. **Drag & drop** — Kanban board powered by `vuedraggable`, persisted server-side.
-7. **Roles** — `admin`, `manager`, `member`, `viewer` with route + API guards.
-8. **Git branches** — `dev`, `staging`, `release` (see below).
-9. **`.gitignore`** — Python, Node, Docker, editor artifacts.
-10. **Admin page** — manage users/roles, status columns, and sprints.
-11. **Dashboard** — task overview, completion rate, and **lead time / cycle time**.
-12. **Configurable status columns** — defaults `TODO`, `InProgress`, `QA`, `Done`; add/edit/remove with WIP limits.
-13. **Sprint config** — auto-generate **2-week sprints on workdays (Mon–Fri)**.
+### Board & Tasks / บอร์ดและงาน
+- **Kanban board, drag & drop** — drag cards between configurable status columns; order persisted server-side. / ลาก-วางการ์ดข้าม column, บันทึกลำดับที่ server
+- **Board views** — toggle **Active Sprint / Backlog / All**, plus a "jump to sprint" dropdown. / สลับมุมมอง Active Sprint / Backlog / All + เลือก sprint เจาะจง
+- **Assignee filter** — filter the board by user (All · Me · each user · Unassigned). / กรองงานตามผู้รับผิดชอบ
+- **Task fields** — title, description, status, priority, assignee, sprint, story points, **expected date**. / ฟิลด์งาน: หัวข้อ, รายละเอียด, สถานะ, priority, ผู้รับผิดชอบ, sprint, story points, วันที่คาดว่าเสร็จ
+- **Image attachments** — attach **multiple images per task** (GridFS), thumbnails + remove, `📎` count badge. / แนบรูปได้หลายรูปต่องาน (GridFS) + ลบ + badge จำนวน
+- **Comments & replies** — comment on a task and reply (one level); delete own (admin/manager any). / คอมเมนต์ + reply 1 ชั้น, ลบของตัวเอง (admin/manager ลบได้ทุกอัน)
+- **Move history** — per-task audit log of status changes (who / from → to / when). / ประวัติการย้ายงาน (ใคร/จาก→ถึง/เมื่อ)
+- **Running task numbers** — atomic per-board counter, e.g. `TASK-1`, or a board's own `MOB-500`. / เลขรันงานอัตโนมัติ ต่อ board
+
+### Multi-board (Channels) / หลายบอร์ด
+- **Multiple boards** — each board has its own tasks, sprints, and status columns. / แต่ละ board มี task/sprint/column ของตัวเอง
+- **Per-board running number** — configurable **prefix + start number** per board. / กำหนด prefix + เลขเริ่มต้น ต่อ board
+- **Membership** — admin assigns users to boards; non-members are denied access. / admin กำหนด member เข้า board; ไม่ใช่ member เข้าไม่ได้
+- **Board switcher** — top-bar dropdown; the selection scopes the whole UI and is remembered. / dropdown สลับ board บน top bar, จำค่าไว้
+
+### Sprints / สปรินต์
+- **Auto-generate sprints** — consecutive **2-week Mon–Fri** sprints (snaps to Monday). / สร้าง sprint อัตโนมัติ 2 สัปดาห์ จ.–ศ.
+- **Per-sprint manday** — set planned capacity (man-days) per sprint. / กำหนด manday (กำลังคน) ต่อ sprint
+- **Complete sprint** — mark completed and **delete that sprint's done tasks** (confirmed). / ปิด sprint แล้วลบงานที่ done ของ sprint นั้น (มี confirm)
+
+### Notifications / การแจ้งเตือน
+- **In-app notifications** — on task **move**, **assign**, and **sprint complete**; the actor is never notified of their own action. / แจ้งเตือนเมื่อย้ายงาน / ถูก assign / ปิด sprint (ไม่แจ้งคนทำเอง)
+- **Bell with unread badge** — dropdown list, **30s polling**, mark-all-read on open, **clear all**. / 🔔 badge นับ unread, poll ทุก 30 วิ, อ่านหมดเมื่อเปิด, ลบทั้งหมดได้
+
+### UI / หน้าตา
+- **Dark mode** — light/dark toggle, persisted, defaults to OS preference. / สลับ light/dark, จำค่า, ค่าเริ่มต้นตาม OS
+- **Responsive** — phone-friendly; sidebar collapses to a hamburger drawer. / รองรับมือถือ; sidebar ยุบเป็น hamburger
+- **Date picker** — native calendar on all date inputs. / date picker ทุกช่องวันที่
+- **Timestamps in UTC+7** — times shown in Asia/Bangkok. / เวลาแสดงเป็น UTC+7 (Asia/Bangkok)
+
+### Admin & Access / แอดมินและสิทธิ์
+- **Login** — JWT auth, login by username *or* email. / login ด้วย JWT, ใช้ username หรือ email
+- **Roles** — `admin` / `manager` / `member` / `viewer` with route + API guards. / สิทธิ์ 4 ระดับ คุมทั้ง route และ API
+- **Admin page** — manage users/roles, status columns (drag-reorder, **editable key** with cascade, WIP limits), sprints, and boards. / จัดการ user, status column (ลากจัดลำดับ + แก้ key + WIP), sprint, board
+- **Dashboard** — totals, completion rate, **lead time / cycle time**, tasks by status/assignee — scoped to the active board. / สรุปงาน, completion rate, lead/cycle time, แยกตาม board
 
 ## Project layout
 
@@ -37,16 +64,20 @@ TaskManagement/
 │   │   ├── core/            # security (JWT/bcrypt), auth dependencies
 │   │   ├── models/          # enums (Role)
 │   │   ├── schemas/         # Pydantic request/response models
-│   │   ├── routers/         # auth, users, tasks, sprints, status_columns, dashboard
-│   │   └── services/        # sprint generation, seed defaults
-│   ├── tests/               # in-process smoke + HTTP integration tests (mongomock)
+│   │   ├── routers/         # auth, users, boards, tasks, task_images, comments,
+│   │   │                    #   notifications, sprints, status_columns, dashboard
+│   │   └── services/        # seed/migration, sprint generation, board access,
+│   │                        #   notifications, image validation
+│   ├── tests/               # smoke + http (mongomock) + images (real Mongo/GridFS)
 │   ├── requirements.txt
 │   └── Dockerfile
 ├── frontend/                # Vue 3 SPA
 │   ├── src/
 │   │   ├── views/           # Login, Board, Dashboard, Admin, AppLayout
-│   │   ├── components/      # TaskModal
-│   │   ├── stores/          # Pinia auth store
+│   │   ├── components/      # TaskModal, ImageUploader, TaskComments, DateField,
+│   │   │                    #   NotificationBell, BoardSwitcher, ThemeToggle
+│   │   ├── composables/     # useTheme
+│   │   ├── stores/          # Pinia: auth, board (active board)
 │   │   ├── router/          # routes + auth/role guards
 │   │   └── api/             # axios client w/ JWT interceptor
 │   └── Dockerfile
@@ -159,8 +190,12 @@ python tests/images_test.py   # image upload/limits/RBAC (needs a running MongoD
 
 ## How key features work
 
-- **Running task numbers** — `database.next_sequence("task")` does an atomic
-  `find_one_and_update($inc)` on a `counters` document, so numbers never collide.
+- **Multi-board** — tasks/sprints/status columns carry a `board_id`; reads/creates
+  are scoped to it (defaulting to a seeded **Default** board) and gated by board
+  membership. On first boot, existing data is migrated into the Default board.
+- **Running task numbers** — an atomic per-board counter (`counters` doc
+  `task:<board_id>`, `find_one_and_update($inc)`), formatted `<board prefix>-<n>`,
+  so numbers never collide and each board has its own series.
 - **Drag & drop** — the board uses a shared `vuedraggable` group; on drop the
   affected column is re-indexed and saved via `PATCH /api/tasks/reorder/bulk`.
 - **Lead time** — moving a task out of the first column stamps `started_at`;
