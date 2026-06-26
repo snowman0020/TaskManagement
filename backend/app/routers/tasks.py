@@ -99,6 +99,7 @@ async def create_task(payload: TaskCreate, current=Depends(require_member)):
         "sprint_id": payload.sprint_id,
         "story_points": payload.story_points,
         "due_date": payload.due_date,
+        "images": [],
         "order": order,
         "created_at": _now(),
         "updated_at": _now(),

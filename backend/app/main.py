@@ -10,6 +10,7 @@ from app.routers import (
     dashboard,
     sprints,
     status_columns,
+    task_images,
     tasks,
     users,
 )
@@ -37,6 +38,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(tasks.router)
+app.include_router(task_images.router)
 app.include_router(sprints.router)
 app.include_router(status_columns.router)
 app.include_router(dashboard.router)
