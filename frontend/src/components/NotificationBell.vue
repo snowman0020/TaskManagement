@@ -1,11 +1,14 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import client from '@/api/client'
 import { formatDateTime } from '@/utils/datetime'
+
+const POLL_MS = 30000
 
 const open = ref(false)
 const items = ref([])
 const unread = ref(0)
+let timer = null
 
 async function load() {
   try {
@@ -15,6 +18,16 @@ async function load() {
   } catch {
     /* ignore — bell just stays empty */
   }
+}
+
+async function clearAll() {
+  try {
+    await client.delete('/api/notifications')
+  } catch {
+    /* ignore */
+  }
+  items.value = []
+  unread.value = 0
 }
 
 async function toggle() {
@@ -33,7 +46,13 @@ async function toggle() {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  timer = setInterval(load, POLL_MS) // poll so new notifications surface without a reload
+})
+onUnmounted(() => {
+  if (timer) clearInterval(timer)
+})
 </script>
 
 <template>
@@ -44,7 +63,10 @@ onMounted(load)
 
     <div v-if="open" class="notif-backdrop" @click="open = false" />
     <div v-if="open" class="notif-panel">
-      <div class="notif-head">Notifications</div>
+      <div class="notif-head">
+        <span>Notifications</span>
+        <button v-if="items.length" class="clear-all" @click="clearAll">Clear all</button>
+      </div>
       <p v-if="!items.length" class="hint">No notifications yet.</p>
       <div
         v-for="n in items"
@@ -91,7 +113,21 @@ onMounted(load)
   z-index: 41;
   padding: 8px;
 }
-.notif-head { font-weight: 700; font-size: 13px; padding: 4px 8px 8px; }
+.notif-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 4px 8px 8px;
+}
+.clear-all {
+  background: transparent;
+  color: var(--danger);
+  padding: 0;
+  font-size: 12px;
+  font-weight: 500;
+}
 .notif-item {
   padding: 8px;
   border-radius: 6px;

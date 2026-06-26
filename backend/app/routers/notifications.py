@@ -23,3 +23,10 @@ async def mark_all_read(current=Depends(get_current_user)):
         {"user_id": str(current["_id"]), "read": False}, {"$set": {"read": True}}
     )
     return {"updated": res.modified_count}
+
+
+@router.delete("")
+async def clear_all(current=Depends(get_current_user)):
+    """Delete all of the current user's notifications."""
+    res = await get_db().notifications.delete_many({"user_id": str(current["_id"])})
+    return {"deleted": res.deleted_count}

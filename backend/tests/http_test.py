@@ -262,7 +262,10 @@ async def main():
         assert all(n.get("sprint_id") != nsp["id"] for n in an["items"]), "actor was notified of own action"
         await c.post("/api/notifications/read-all", headers=mh)
         assert (await c.get("/api/notifications", headers=mh)).json()["unread"] == 0
-        print("✓ notifications: assign/move/sprint_complete delivered, actor skipped, read-all clears")
+        # delete-all clears the list entirely
+        await c.delete("/api/notifications", headers=mh)
+        assert (await c.get("/api/notifications", headers=mh)).json()["items"] == []
+        print("✓ notifications: assign/move/sprint_complete delivered, actor skipped, read-all + delete-all")
 
         # multi-board: a second board with its own prefix + start number, isolated
         boards = (await c.get("/api/boards", headers=h)).json()
