@@ -54,7 +54,41 @@ TaskManagement/
 └── .gitignore
 ```
 
-## Quick start (Docker)
+## Getting started
+
+After cloning, you have three ways to run the app. **Default login: `admin` / `admin1234`.**
+
+### Prerequisites
+
+| | Needed for | Notes |
+|---|---|---|
+| **Docker** | the database (and the all-in-one option) | runs MongoDB; the helper script starts it for you |
+| **Python 3.12** | backend | 3.10+ works; **avoid 3.14** (`pydantic-core` build error). `py -3.12` on Windows |
+| **Node 18+** | frontend | `npm` |
+
+> No Docker? Run a MongoDB yourself on `localhost:27017`, or
+> `docker run -d -p 27017:27017 --name tm-mongo mongo:7`.
+
+### Option 1 — One command (recommended)
+
+Starts MongoDB (via Docker) + backend (`:8000`) + frontend (`:5173`), each in its own window.
+It auto-selects Python 3.12 and uses the venv directly (no execution-policy prompt).
+
+```powershell
+# Windows (PowerShell)
+.\dev.ps1
+```
+
+```bash
+# macOS / Linux
+./dev.sh
+```
+
+Then open **http://localhost:5173**.
+
+### Option 2 — Docker (zero local setup)
+
+Runs the whole stack in containers:
 
 ```bash
 docker compose up --build
@@ -62,59 +96,56 @@ docker compose up --build
 
 - Frontend: http://localhost:8080
 - Backend API + docs: http://localhost:8000/docs
-- Default admin: **admin / admin1234** (change in production!)
 
-## One-click helper scripts
+### Option 3 — Manual (two terminals)
 
-Convenience scripts are provided for both Windows (PowerShell) and macOS/Linux (bash).
-They auto-select **Python 3.12** (avoiding the Python 3.14 `pydantic-core` build error)
-and call the venv's Python directly, so you never hit a PowerShell execution-policy prompt.
+**Terminal 1 — backend** (`http://localhost:8000`, docs at `/docs`):
+
+```bash
+cd backend
+python -m venv .venv
+# Windows:        .\.venv\Scripts\Activate.ps1
+# macOS / Linux:  source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env            # optional: edit MONGO_URI, JWT_SECRET, admin creds
+uvicorn app.main:app --reload
+```
+
+**Terminal 2 — frontend** (`http://localhost:5173`, proxies `/api` → `:8000`):
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Make sure MongoDB is running first (see Prerequisites). On first boot the backend
+seeds the default admin and the four status columns (`TODO`, `InProgress`, `QA`, `Done`).
+
+> The dev server picks the next free port if `5173` is taken (e.g. `5174`) — check the terminal output.
+
+### Per-part helper scripts
 
 | Goal | Windows (PowerShell) | macOS / Linux |
 |------|----------------------|---------------|
 | Everything (Mongo + backend + frontend) | `.\dev.ps1` | `./dev.sh` |
 | Backend only: setup venv + install + run | `cd backend; .\dev.ps1` | `cd backend && ./dev.sh` |
 | Backend: quick start (after setup) | `cd backend; .\start.ps1` | `cd backend && ./dev.sh` |
-| Backend tests (no MongoDB needed) | `cd backend; .\test.ps1` | `cd backend && ./test.sh` |
+| Backend tests | `cd backend; .\test.ps1` | `cd backend && ./test.sh` |
 | Frontend only | `cd frontend; .\dev.ps1` | `cd frontend && ./dev.sh` |
 
-The root `dev.ps1` / `dev.sh` starts a MongoDB container (if Docker is available),
-then launches the backend (`:8000`) and frontend (`:5173`). Log in with **admin / admin1234**.
+## Tests
 
-> Prefer zero local setup? `docker compose up --build` runs the whole stack in containers.
-
-## Local development
-
-### Backend
-
-```bash
-cd backend
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env          # edit MONGO_URI, JWT_SECRET, admin creds
-uvicorn app.main:app --reload # http://localhost:8000
-```
-
-On first boot the backend seeds the default admin account and the four status
-columns (`TODO`, `InProgress`, `QA`, `Done`).
-
-### Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev                   # http://localhost:5173 (proxies /api to :8000)
-```
-
-### Tests
-
-The tests run fully in-process against an in-memory Mongo (no server needed):
+`smoke_test.py` and `http_test.py` run fully in-process against an in-memory Mongo.
+`images_test.py` exercises GridFS image upload and needs a **real** MongoDB running
+(`tm-mongo` on `:27017`), because the in-memory mock has no GridFS.
 
 ```bash
 cd backend
 pip install -r requirements-dev.txt
 python tests/smoke_test.py    # seed, running numbers, sprint generation
-python tests/http_test.py     # login, RBAC, create/move task, dashboard, leadtime
+python tests/http_test.py     # login, RBAC, tasks, board filters, sprint manday, move history
+python tests/images_test.py   # image upload/limits/RBAC (needs a running MongoDB)
 ```
 
 ## Roles & permissions
