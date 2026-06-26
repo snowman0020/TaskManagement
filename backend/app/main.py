@@ -9,6 +9,7 @@ from app.routers import (
     auth,
     comments,
     dashboard,
+    notifications,
     sprints,
     status_columns,
     task_images,
@@ -41,6 +42,7 @@ app.include_router(users.router)
 app.include_router(tasks.router)
 app.include_router(task_images.router)
 app.include_router(comments.router)
+app.include_router(notifications.router)
 app.include_router(sprints.router)
 app.include_router(status_columns.router)
 app.include_router(dashboard.router)

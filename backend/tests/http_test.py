@@ -247,6 +247,23 @@ async def main():
         assert (await c.get(f"/api/tasks/{t1['id']}/comments", headers=h)).json() == []
         print("✓ comments: nested replies, reply-to-reply 400, viewer 403, RBAC delete, cascade")
 
+        # notifications: assign + move + sprint complete; actor never notifies self
+        member_me = (await c.get("/api/auth/me", headers=mh)).json()
+        bid = member_me["id"]
+        nt = (await c.post("/api/tasks", json={"title": "assigned to B", "assignee_id": bid}, headers=h)).json()
+        await c.patch(f"/api/tasks/{nt['id']}/move", json={"status": "InProgress", "order": 0}, headers=h)
+        nsp = (await c.post("/api/sprints", json={"name": "Notify Sprint", "start_date": "2027-01-04"}, headers=h)).json()
+        await c.post(f"/api/sprints/{nsp['id']}/complete", headers=h)
+        bn = (await c.get("/api/notifications", headers=mh)).json()
+        btypes = set(n["type"] for n in bn["items"])
+        assert {"assign", "move", "sprint_complete"} <= btypes, bn
+        assert bn["unread"] >= 3, bn
+        an = (await c.get("/api/notifications", headers=h)).json()
+        assert all(n.get("sprint_id") != nsp["id"] for n in an["items"]), "actor was notified of own action"
+        await c.post("/api/notifications/read-all", headers=mh)
+        assert (await c.get("/api/notifications", headers=mh)).json()["unread"] == 0
+        print("✓ notifications: assign/move/sprint_complete delivered, actor skipped, read-all clears")
+
         # admin cannot demote/lock out the last admin
         me = (await c.get("/api/auth/me", headers=h)).json()
         lock = await c.patch(f"/api/users/{me['id']}", json={"role": "viewer"}, headers=h)

@@ -6,6 +6,7 @@ from app.core.deps import get_current_user, require_member
 from app.database import get_db, next_sequence
 from app.schemas.common import oid, serialize, serialize_list
 from app.schemas.task import TaskCreate, TaskMove, TaskReorder, TaskUpdate
+from app.services.notifications import notify
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
@@ -52,6 +53,35 @@ async def _log_move(task: dict, from_status: str, to_status: str, user: dict) ->
     except Exception:
         # auditing must never fail the move itself
         pass
+
+
+async def _status_name(key: str) -> str:
+    col = await get_db().status_columns.find_one({"key": key})
+    return col["name"] if col else key
+
+
+async def _notify_move(task: dict, new_status: str, assignee: str | None, actor: dict) -> None:
+    """Tell a task's assignee it was moved (the actor never notifies themselves)."""
+    if not assignee:
+        return
+    name = await _status_name(new_status)
+    await notify(
+        [assignee],
+        "move",
+        f"{task.get('task_number')} moved to {name} by {actor.get('username')}",
+        actor_id=str(actor["_id"]),
+        task_id=str(task["_id"]),
+    )
+
+
+async def _notify_assign(task: dict, assignee: str, actor: dict) -> None:
+    await notify(
+        [assignee],
+        "assign",
+        f"{actor.get('username')} assigned {task.get('task_number')} to you",
+        actor_id=str(actor["_id"]),
+        task_id=str(task["_id"]),
+    )
 
 
 @router.get("")
@@ -147,6 +177,9 @@ async def create_task(payload: TaskCreate, current=Depends(require_member)):
     await _apply_status_timestamps(doc, status, doc)
     res = await db.tasks.insert_one(doc)
     doc["_id"] = res.inserted_id
+    # notify the assignee if the task is created already assigned to someone else
+    if payload.assignee_id:
+        await _notify_assign(doc, payload.assignee_id, current)
     return serialize(doc)
 
 
@@ -185,6 +218,12 @@ async def update_task(task_id: str, payload: TaskUpdate, current=Depends(require
     data = payload.model_dump(exclude_unset=True)
     update = {k: v for k, v in data.items()}
     status_changed = "status" in data and data["status"] != task.get("status")
+    new_assignee = data["assignee_id"] if "assignee_id" in data else task.get("assignee_id")
+    assignee_changed = (
+        "assignee_id" in data
+        and data["assignee_id"]
+        and data["assignee_id"] != task.get("assignee_id")
+    )
     if status_changed:
         _, _done, valid = await _status_context()
         _ensure_valid_status(update["status"], valid)
@@ -196,6 +235,9 @@ async def update_task(task_id: str, payload: TaskUpdate, current=Depends(require
     )
     if status_changed:
         await _log_move(task, task.get("status"), data["status"], current)
+        await _notify_move(task, data["status"], new_assignee, current)
+    if assignee_changed:
+        await _notify_assign(task, data["assignee_id"], current)
     return serialize(res)
 
 
@@ -219,6 +261,7 @@ async def move_task(task_id: str, payload: TaskMove, current=Depends(require_mem
     )
     if payload.status != task.get("status"):
         await _log_move(task, task.get("status"), payload.status, current)
+        await _notify_move(task, payload.status, task.get("assignee_id"), current)
     return serialize(res)
 
 
@@ -244,6 +287,7 @@ async def reorder_tasks(payload: TaskReorder, current=Depends(require_member)):
         await db.tasks.update_one({"_id": oid(item.id)}, {"$set": update})
         if moved:
             await _log_move(task, task.get("status"), item.status, current)
+            await _notify_move(task, item.status, task.get("assignee_id"), current)
     return {"updated": len(payload.items)}
 
 

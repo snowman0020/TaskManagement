@@ -7,6 +7,7 @@ from app.core.deps import get_current_user, require_manager
 from app.database import get_db
 from app.schemas.common import oid, serialize, serialize_list
 from app.schemas.sprint import SprintCreate, SprintGenerate, SprintUpdate
+from app.services.notifications import notify
 from app.services.sprint_service import build_sprints, sprint_end_date, working_days
 
 router = APIRouter(prefix="/api/sprints", tags=["sprints"])
@@ -93,7 +94,7 @@ async def update_sprint(sprint_id: str, payload: SprintUpdate, _=Depends(require
 
 
 @router.post("/{sprint_id}/complete")
-async def complete_sprint(sprint_id: str, _=Depends(require_manager)):
+async def complete_sprint(sprint_id: str, current=Depends(require_manager)):
     """Mark a sprint completed and permanently delete its done tasks.
 
     Only tasks in THIS sprint whose status is a done column are removed;
@@ -116,6 +117,16 @@ async def complete_sprint(sprint_id: str, _=Depends(require_manager)):
         {"_id": oid(sprint_id)}, {"$set": {"status": "completed"}}
     )
     sprint = await db.sprints.find_one({"_id": oid(sprint_id)})
+
+    # tell everyone the sprint wrapped up
+    users = await db.users.find({"is_active": True}).to_list(1000)
+    await notify(
+        [str(u["_id"]) for u in users],
+        "sprint_complete",
+        f"{current.get('username')} completed sprint {sprint['name']}",
+        actor_id=str(current["_id"]),
+        sprint_id=sprint_id,
+    )
     return {"deleted": res.deleted_count, "sprint": serialize(sprint)}
 
 

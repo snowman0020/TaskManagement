@@ -40,6 +40,8 @@ async def _ensure_indexes() -> None:
     await db.status_columns.create_index("order")
     await db.activity_log.create_index([("task_id", 1), ("at", -1)])
     await db.comments.create_index([("task_id", 1), ("created_at", 1)])
+    await db.notifications.create_index([("user_id", 1), ("created_at", -1)])
+    await db.notifications.create_index([("user_id", 1), ("read", 1)])
 
 
 async def next_sequence(name: str) -> int:
