@@ -146,6 +146,30 @@ async def main():
         assert bad.status_code == 422, bad.status_code
         print("✓ sprint manday: create/patch/generate persist, negative rejected (422)")
 
+        # backlog view: sprint_id=none returns only sprint-less tasks
+        sprint_list = (await c.get("/api/sprints", headers=h)).json()
+        sid = sprint_list[0]["id"]
+        in_sprint = (await c.post("/api/tasks", json={"title": "in sprint", "sprint_id": sid}, headers=h)).json()
+        backlog_task = (await c.post("/api/tasks", json={"title": "in backlog"}, headers=h)).json()
+        bl = (await c.get("/api/tasks/board?sprint_id=none", headers=h)).json()
+        bl_tasks = [t for col in bl["tasks"].values() for t in col]
+        assert backlog_task["id"] in [t["id"] for t in bl_tasks]
+        assert in_sprint["id"] not in [t["id"] for t in bl_tasks]
+        assert all(not t.get("sprint_id") for t in bl_tasks)
+        print("✓ board backlog filter (sprint_id=none) returns only sprint-less tasks")
+
+        # task move history: t1 was moved TODO->InProgress->Done earlier
+        hist = (await c.get(f"/api/tasks/{t1['id']}/history", headers=h)).json()
+        assert len(hist) == 2, hist
+        assert hist[0]["from_status"] == "InProgress" and hist[0]["to_status"] == "Done"
+        assert hist[1]["from_status"] == "TODO" and hist[1]["to_status"] == "InProgress"
+        assert all(e["username"] == "admin" for e in hist)
+        # a same-column reorder records nothing new
+        await c.patch("/api/tasks/reorder/bulk",
+                      json={"items": [{"id": t1["id"], "status": "Done", "order": 1}]}, headers=h)
+        assert len((await c.get(f"/api/tasks/{t1['id']}/history", headers=h)).json()) == 2
+        print("✓ task move history: status changes logged newest-first, same-column reorder ignored")
+
         # role enforcement: member created, member cannot create users
         await c.post("/api/users", json={
             "username": "member1", "email": "m@e.com", "password": "secret1", "role": "member",

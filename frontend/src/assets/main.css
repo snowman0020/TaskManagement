@@ -210,6 +210,23 @@ label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 4px
 .avatar { width: 22px; height: 22px; border-radius: 50%; background: var(--primary); color: var(--on-primary); font-size: 11px; display: inline-flex; align-items: center; justify-content: center; }
 .ghost-card { opacity: 0.4; }
 
+/* Segmented control (Board view toggle) */
+.segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg-btn {
+  background: var(--panel);
+  color: var(--text);
+  border: none;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.seg-btn:last-child { border-right: none; }
+.seg-btn:hover { background: var(--chip-bg); }
+.seg-btn.active { background: var(--primary); color: var(--on-primary); }
+.empty-hint { color: var(--muted); padding: 24px 4px; font-size: 14px; }
+
 /* Assignee filter chips (Board) */
 .filter-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; overflow-x: auto; }
 .chip {

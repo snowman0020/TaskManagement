@@ -38,6 +38,7 @@ async def _ensure_indexes() -> None:
     await db.sprints.create_index("name", unique=True)
     await db.status_columns.create_index("key", unique=True)
     await db.status_columns.create_index("order")
+    await db.activity_log.create_index([("task_id", 1), ("at", -1)])
 
 
 async def next_sequence(name: str) -> int:
