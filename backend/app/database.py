@@ -29,9 +29,13 @@ def get_db() -> AsyncIOMotorDatabase:
 
 async def _ensure_indexes() -> None:
     db = get_db()
-    # Drop obsolete global-unique indexes — column keys and sprint names are now
-    # unique per board, not globally (left over from the pre-multi-board schema).
-    for coll, idx in ((db.status_columns, "key_1"), (db.sprints, "name_1")):
+    # Drop obsolete global-unique indexes — task numbers, column keys, and sprint
+    # names are now unique PER BOARD, not globally (pre-multi-board leftovers).
+    for coll, idx in (
+        (db.tasks, "task_number_1"),
+        (db.status_columns, "key_1"),
+        (db.sprints, "name_1"),
+    ):
         try:
             await coll.drop_index(idx)
         except Exception:
@@ -39,7 +43,10 @@ async def _ensure_indexes() -> None:
 
     await db.users.create_index("username", unique=True)
     await db.users.create_index("email", unique=True)
-    await db.tasks.create_index("task_number", unique=True)
+    # per-board uniqueness (storage-level guarantee, not just app-level checks)
+    await db.tasks.create_index([("board_id", 1), ("task_number", 1)], unique=True)
+    await db.status_columns.create_index([("board_id", 1), ("key", 1)], unique=True)
+    await db.sprints.create_index([("board_id", 1), ("name", 1)], unique=True)
     await db.tasks.create_index("status")
     await db.tasks.create_index("sprint_id")
     await db.tasks.create_index("board_id")

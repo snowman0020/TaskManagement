@@ -8,6 +8,7 @@ from app.database import get_db
 from app.schemas.common import oid, serialize, serialize_list
 from app.schemas.sprint import SprintCreate, SprintGenerate, SprintUpdate
 from app.services.access import ensure_board_access, resolve_board_id
+from app.services.cleanup import purge_task_refs
 from app.services.notifications import notify
 from app.services.sprint_service import build_sprints, sprint_end_date, working_days
 
@@ -90,15 +91,18 @@ async def generate_sprints(payload: SprintGenerate, current=Depends(require_mana
 
 
 @router.patch("/{sprint_id}")
-async def update_sprint(sprint_id: str, payload: SprintUpdate, _=Depends(require_manager)):
+async def update_sprint(sprint_id: str, payload: SprintUpdate, current=Depends(require_manager)):
+    db = get_db()
+    sprint = await db.sprints.find_one({"_id": oid(sprint_id)})
+    if not sprint:
+        raise HTTPException(status_code=404, detail="Sprint not found")
+    await ensure_board_access(sprint.get("board_id"), current)
     data = payload.model_dump(exclude_unset=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nothing to update")
-    res = await get_db().sprints.find_one_and_update(
+    res = await db.sprints.find_one_and_update(
         {"_id": oid(sprint_id)}, {"$set": data}, return_document=True
     )
-    if not res:
-        raise HTTPException(status_code=404, detail="Sprint not found")
     return serialize(res)
 
 
@@ -113,28 +117,31 @@ async def complete_sprint(sprint_id: str, current=Depends(require_manager)):
     sprint = await db.sprints.find_one({"_id": oid(sprint_id)})
     if not sprint:
         raise HTTPException(status_code=404, detail="Sprint not found")
+    board_id = sprint.get("board_id")
+    await ensure_board_access(board_id, current)
 
     cols = await db.status_columns.find(
-        {"board_id": sprint.get("board_id")}
+        {"board_id": board_id}
     ).sort("order", 1).to_list(100)
     done_keys = [c["key"] for c in cols if c.get("is_done")]
     if not done_keys and cols:
         done_keys = [cols[-1]["key"]]  # fallback: treat the last column as done
 
-    res = await db.tasks.delete_many(
-        {"sprint_id": sprint_id, "status": {"$in": done_keys}}
-    )
+    # delete this board+sprint's done tasks (scoped by board_id so a foreign
+    # task that wrongly carries this sprint_id can never be swept up) + their refs
+    done_filter = {"board_id": board_id, "sprint_id": sprint_id, "status": {"$in": done_keys}}
+    done_tasks = await db.tasks.find(done_filter).to_list(5000)
+    await purge_task_refs(done_tasks)
+    res = await db.tasks.delete_many(done_filter)
     await db.sprints.update_one(
         {"_id": oid(sprint_id)}, {"$set": {"status": "completed"}}
     )
     sprint = await db.sprints.find_one({"_id": oid(sprint_id)})
 
     # notify the board's members (the default board is open, so notify everyone)
-    board = None
-    if sprint.get("board_id"):
-        board = await db.boards.find_one({"_id": oid(sprint["board_id"])})
-    if board and not board.get("is_default") and board.get("member_ids"):
-        recipients = board["member_ids"]
+    board = await db.boards.find_one({"_id": oid(board_id)}) if board_id else None
+    if board and not board.get("is_default"):
+        recipients = board.get("member_ids") or []  # empty list -> notify nobody
     else:
         users = await db.users.find({"is_active": True}).to_list(1000)
         recipients = [str(u["_id"]) for u in users]
@@ -149,7 +156,11 @@ async def complete_sprint(sprint_id: str, current=Depends(require_manager)):
 
 
 @router.delete("/{sprint_id}", status_code=204)
-async def delete_sprint(sprint_id: str, _=Depends(require_manager)):
-    res = await get_db().sprints.delete_one({"_id": oid(sprint_id)})
-    if res.deleted_count == 0:
+async def delete_sprint(sprint_id: str, current=Depends(require_manager)):
+    db = get_db()
+    sprint = await db.sprints.find_one({"_id": oid(sprint_id)})
+    if not sprint:
         raise HTTPException(status_code=404, detail="Sprint not found")
+    await ensure_board_access(sprint.get("board_id"), current)
+    await db.sprints.delete_one({"_id": oid(sprint_id)})
+    await db.notifications.delete_many({"sprint_id": sprint_id})

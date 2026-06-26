@@ -8,6 +8,7 @@ from app.database import get_db
 from app.models.user import Role
 from app.schemas.comment import CommentCreate
 from app.schemas.common import oid, serialize, serialize_list
+from app.services.access import ensure_board_access
 
 router = APIRouter(prefix="/api/tasks/{task_id}/comments", tags=["comments"])
 
@@ -24,9 +25,11 @@ async def _task_or_404(task_id: str) -> dict:
 
 
 @router.get("")
-async def list_comments(task_id: str, _=Depends(get_current_user)):
+async def list_comments(task_id: str, current=Depends(get_current_user)):
     """Return the task's comments nested as top-level + their replies."""
     db = get_db()
+    task = await _task_or_404(task_id)
+    await ensure_board_access(task.get("board_id"), current)
     docs = serialize_list(
         await db.comments.find({"task_id": task_id}).sort("created_at", 1).to_list(2000)
     )
@@ -43,7 +46,8 @@ async def list_comments(task_id: str, _=Depends(get_current_user)):
 @router.post("", status_code=201)
 async def add_comment(task_id: str, payload: CommentCreate, current=Depends(require_member)):
     db = get_db()
-    await _task_or_404(task_id)
+    task = await _task_or_404(task_id)
+    await ensure_board_access(task.get("board_id"), current)
 
     if payload.parent_id:
         parent = await db.comments.find_one({"_id": oid(payload.parent_id)})
@@ -68,8 +72,10 @@ async def add_comment(task_id: str, payload: CommentCreate, current=Depends(requ
 @router.delete("/{comment_id}", status_code=204)
 async def delete_comment(task_id: str, comment_id: str, current=Depends(require_member)):
     db = get_db()
+    task = await _task_or_404(task_id)
+    await ensure_board_access(task.get("board_id"), current)
     comment = await db.comments.find_one({"_id": oid(comment_id)})
-    if not comment:
+    if not comment or comment.get("task_id") != task_id:
         raise HTTPException(status_code=404, detail="Comment not found")
 
     is_owner = comment.get("user_id") == str(current["_id"])

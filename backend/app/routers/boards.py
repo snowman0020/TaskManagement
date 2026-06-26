@@ -8,6 +8,7 @@ from app.database import get_db
 from app.models.user import Role
 from app.schemas.board import BoardCreate, BoardUpdate
 from app.schemas.common import oid, serialize, serialize_list
+from app.services.cleanup import purge_task_refs
 from app.services.seed import DEFAULT_COLUMNS
 
 router = APIRouter(prefix="/api/boards", tags=["boards"])
@@ -79,7 +80,13 @@ async def delete_board(board_id: str, _=Depends(require_admin)):
         raise HTTPException(status_code=404, detail="Board not found")
     if board.get("is_default"):
         raise HTTPException(status_code=400, detail="Cannot delete the default board")
-    # cascade: remove the board's tasks, sprints, columns, and counter
+    # cascade: remove the board's tasks, sprints, columns, counter, and the
+    # secondary data (images/comments/history/notifications) that references them
+    tasks = await db.tasks.find({"board_id": board_id}).to_list(10000)
+    sprint_ids = [str(s["_id"]) for s in await db.sprints.find({"board_id": board_id}).to_list(5000)]
+    await purge_task_refs(tasks)
+    if sprint_ids:
+        await db.notifications.delete_many({"sprint_id": {"$in": sprint_ids}})
     await db.tasks.delete_many({"board_id": board_id})
     await db.sprints.delete_many({"board_id": board_id})
     await db.status_columns.delete_many({"board_id": board_id})

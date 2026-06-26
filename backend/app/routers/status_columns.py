@@ -37,10 +37,14 @@ async def create_column(payload: StatusColumnCreate, current=Depends(require_man
 
 # Defined before "/{column_id}" so the literal path isn't captured as an id.
 @router.patch("/reorder")
-async def reorder_columns(payload: StatusColumnReorder, _=Depends(require_manager)):
+async def reorder_columns(payload: StatusColumnReorder, current=Depends(require_manager)):
     """Persist a new column order after a drag-and-drop in Admin."""
     db = get_db()
     for item in payload.items:
+        col = await db.status_columns.find_one({"_id": oid(item.id)})
+        if not col:
+            continue
+        await ensure_board_access(col.get("board_id"), current)
         await db.status_columns.update_one(
             {"_id": oid(item.id)}, {"$set": {"order": item.order}}
         )
@@ -48,11 +52,12 @@ async def reorder_columns(payload: StatusColumnReorder, _=Depends(require_manage
 
 
 @router.patch("/{column_id}")
-async def update_column(column_id: str, payload: StatusColumnUpdate, _=Depends(require_manager)):
+async def update_column(column_id: str, payload: StatusColumnUpdate, current=Depends(require_manager)):
     db = get_db()
     col = await db.status_columns.find_one({"_id": oid(column_id)})
     if not col:
         raise HTTPException(status_code=404, detail="Column not found")
+    await ensure_board_access(col.get("board_id"), current)
 
     data = payload.model_dump(exclude_unset=True)
     if not data:
@@ -64,6 +69,8 @@ async def update_column(column_id: str, payload: StatusColumnUpdate, _=Depends(r
     key_changed = bool(new_key) and new_key != old_key
     if key_changed and await db.status_columns.find_one({"key": new_key, "board_id": board_id}):
         raise HTTPException(status_code=409, detail="Column key already exists")
+    if not key_changed:
+        data.pop("key", None)  # never write a null/unchanged key over the real one
 
     res = await db.status_columns.find_one_and_update(
         {"_id": oid(column_id)}, {"$set": data}, return_document=True
@@ -77,11 +84,12 @@ async def update_column(column_id: str, payload: StatusColumnUpdate, _=Depends(r
 
 
 @router.delete("/{column_id}", status_code=204)
-async def delete_column(column_id: str, _=Depends(require_manager)):
+async def delete_column(column_id: str, current=Depends(require_manager)):
     db = get_db()
     col = await db.status_columns.find_one({"_id": oid(column_id)})
     if not col:
         raise HTTPException(status_code=404, detail="Column not found")
+    await ensure_board_access(col.get("board_id"), current)
     if await db.tasks.count_documents(
         {"status": col["key"], "board_id": col.get("board_id")}
     ) > 0:

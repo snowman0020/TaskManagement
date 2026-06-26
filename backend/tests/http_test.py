@@ -290,6 +290,27 @@ async def main():
         assert (await c.get(f"/api/tasks/board?board_id={nbid}", headers=mh)).status_code == 200
         print("✓ multi-board: per-board prefix/start, isolated tasks+columns, membership 403")
 
+        # IDOR: a non-member is denied per-id access to the board's task/comments
+        assert (await c.get(f"/api/tasks/{bt['id']}", headers=vh)).status_code == 403
+        assert (await c.get(f"/api/tasks/{bt['id']}/history", headers=vh)).status_code == 403
+        assert (await c.get(f"/api/tasks/{bt['id']}/comments", headers=vh)).status_code == 403
+        assert (await c.delete(f"/api/tasks/{bt['id']}", headers=vh)).status_code == 403
+        assert (await c.get(f"/api/tasks/{bt['id']}", headers=mh)).status_code == 200  # member ok
+        # second board with the DEFAULT 'TASK' prefix numbers from its own counter
+        gamma = (await c.post("/api/boards", json={"name": "Gamma", "member_ids": [bid]}, headers=h)).json()
+        gt = (await c.post("/api/tasks", json={"title": "g", "board_id": gamma["id"]}, headers=h)).json()
+        assert gt["task_number"] == "TASK-1", gt
+        # a task cannot reference a sprint from another board
+        bsp = (await c.post("/api/sprints", json={"name": "Beta Sprint", "start_date": "2027-02-01", "board_id": nbid}, headers=h)).json()
+        cross = await c.post("/api/tasks", json={"title": "x", "board_id": gamma["id"], "sprint_id": bsp["id"]}, headers=h)
+        assert cross.status_code == 400, cross.status_code
+        # PATCH a column with key:null must not overwrite the real key
+        col0 = (await c.get("/api/status-columns", headers=h)).json()[0]
+        await c.patch(f"/api/status-columns/{col0['id']}", json={"key": None, "name": "Renamed"}, headers=h)
+        col0b = next(x for x in (await c.get("/api/status-columns", headers=h)).json() if x["id"] == col0["id"])
+        assert col0b["key"] == col0["key"], col0b
+        print("✓ hardening: per-id IDOR 403, default-prefix per-board numbering, cross-board sprint 400, key=null ignored")
+
         # admin cannot demote/lock out the last admin
         me = (await c.get("/api/auth/me", headers=h)).json()
         lock = await c.patch(f"/api/users/{me['id']}", json={"role": "viewer"}, headers=h)

@@ -7,6 +7,7 @@ from app.database import get_db, next_sequence
 from app.schemas.common import oid, serialize, serialize_list
 from app.schemas.task import TaskCreate, TaskMove, TaskReorder, TaskUpdate
 from app.services.access import ensure_board_access, resolve_board_id
+from app.services.cleanup import purge_task_refs
 from app.services.notifications import notify
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -30,6 +31,15 @@ def _now() -> datetime:
 def _ensure_valid_status(status: str, valid: set[str]) -> None:
     if status not in valid:
         raise HTTPException(status_code=400, detail=f"Unknown status: {status}")
+
+
+async def _ensure_sprint_on_board(sprint_id: str | None, board_id: str) -> None:
+    """A task may only reference a sprint that lives on the same board."""
+    if not sprint_id:
+        return
+    sp = await get_db().sprints.find_one({"_id": oid(sprint_id)})
+    if not sp or sp.get("board_id") != board_id:
+        raise HTTPException(status_code=400, detail="Sprint not found on this board")
 
 
 async def _log_move(task: dict, from_status: str, to_status: str, user: dict) -> None:
@@ -152,6 +162,7 @@ async def create_task(payload: TaskCreate, current=Depends(require_member)):
     first_status, done_status, valid = await _status_context(board_id)
     status = payload.status or first_status
     _ensure_valid_status(status, valid)
+    await _ensure_sprint_on_board(payload.sprint_id, board_id)
 
     # running number is per board: <board prefix>-<board counter>
     prefix = board.get("prefix", "TASK")
@@ -196,10 +207,11 @@ async def create_task(payload: TaskCreate, current=Depends(require_member)):
 
 
 @router.get("/{task_id}")
-async def get_task(task_id: str, _=Depends(get_current_user)):
+async def get_task(task_id: str, current=Depends(get_current_user)):
     doc = await get_db().tasks.find_one({"_id": oid(task_id)})
     if not doc:
         raise HTTPException(status_code=404, detail="Task not found")
+    await ensure_board_access(doc.get("board_id"), current)
     return serialize(doc)
 
 
@@ -228,7 +240,10 @@ async def update_task(task_id: str, payload: TaskUpdate, current=Depends(require
         raise HTTPException(status_code=404, detail="Task not found")
 
     board_id = task.get("board_id")
+    await ensure_board_access(board_id, current)
     data = payload.model_dump(exclude_unset=True)
+    if "sprint_id" in data:
+        await _ensure_sprint_on_board(data["sprint_id"], board_id)
     update = {k: v for k, v in data.items()}
     status_changed = "status" in data and data["status"] != task.get("status")
     new_assignee = data["assignee_id"] if "assignee_id" in data else task.get("assignee_id")
@@ -248,7 +263,9 @@ async def update_task(task_id: str, payload: TaskUpdate, current=Depends(require
     )
     if status_changed:
         await _log_move(task, task.get("status"), data["status"], current)
-        await _notify_move(task, data["status"], new_assignee, current)
+        # if the assignee also changed, the assign-notify below is the right one
+        if not assignee_changed:
+            await _notify_move(task, data["status"], new_assignee, current)
     if assignee_changed:
         await _notify_assign(task, data["assignee_id"], current)
     return serialize(res)
@@ -263,6 +280,7 @@ async def move_task(task_id: str, payload: TaskMove, current=Depends(require_mem
         raise HTTPException(status_code=404, detail="Task not found")
 
     board_id = task.get("board_id")
+    await ensure_board_access(board_id, current)
     _, _done, valid = await _status_context(board_id)
     _ensure_valid_status(payload.status, valid)
 
@@ -288,6 +306,7 @@ async def reorder_tasks(payload: TaskReorder, current=Depends(require_member)):
         if not task:
             continue
         board_id = task.get("board_id")
+        await ensure_board_access(board_id, current)
         _, _done, valid = await _status_context(board_id)
         _ensure_valid_status(item.status, valid)
         update: dict = {
@@ -306,14 +325,23 @@ async def reorder_tasks(payload: TaskReorder, current=Depends(require_member)):
 
 
 @router.get("/{task_id}/history")
-async def task_history(task_id: str, _=Depends(get_current_user)):
+async def task_history(task_id: str, current=Depends(get_current_user)):
     """Return a task's move history (status changes), newest first."""
-    docs = await get_db().activity_log.find({"task_id": task_id}).sort("at", -1).to_list(500)
+    db = get_db()
+    task = await db.tasks.find_one({"_id": oid(task_id)})
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    await ensure_board_access(task.get("board_id"), current)
+    docs = await db.activity_log.find({"task_id": task_id}).sort("at", -1).to_list(500)
     return serialize_list(docs)
 
 
 @router.delete("/{task_id}", status_code=204)
-async def delete_task(task_id: str, _=Depends(require_member)):
-    res = await get_db().tasks.delete_one({"_id": oid(task_id)})
-    if res.deleted_count == 0:
+async def delete_task(task_id: str, current=Depends(require_member)):
+    db = get_db()
+    task = await db.tasks.find_one({"_id": oid(task_id)})
+    if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    await ensure_board_access(task.get("board_id"), current)
+    await purge_task_refs([task])  # drop its images/comments/history/notifications
+    await db.tasks.delete_one({"_id": oid(task_id)})
