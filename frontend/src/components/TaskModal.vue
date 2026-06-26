@@ -2,6 +2,7 @@
 import { ref, watch, onMounted } from 'vue'
 import client from '@/api/client'
 import ImageUploader from '@/components/ImageUploader.vue'
+import { formatDateTime } from '@/utils/datetime'
 
 const props = defineProps({
   task: { type: Object, default: null },
@@ -33,7 +34,7 @@ function statusName(key) {
 }
 
 function fmtTime(iso) {
-  return iso ? new Date(iso).toLocaleString() : ''
+  return formatDateTime(iso)
 }
 
 onMounted(loadHistory)

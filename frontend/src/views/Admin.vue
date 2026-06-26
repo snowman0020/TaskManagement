@@ -131,6 +131,23 @@ async function saveManday(s) {
     await loadSprints()
   }
 }
+async function completeSprint(s) {
+  if (
+    !confirm(
+      `Complete "${s.name}"? This permanently deletes its done tasks and cannot be undone.`
+    )
+  )
+    return
+  sprintError.value = ''
+  try {
+    const { data } = await client.post(`/api/sprints/${s.id}/complete`)
+    alert(`Completed "${s.name}". Deleted ${data.deleted} done task(s).`)
+  } catch (e) {
+    sprintError.value = e.response?.data?.detail || 'Failed'
+  } finally {
+    await loadSprints()
+  }
+}
 async function setSprintStatus(s, status) {
   sprintError.value = ''
   try {
@@ -304,7 +321,10 @@ onMounted(() => {
                 <option value="completed">completed</option>
               </select>
             </td>
-            <td><button class="danger" @click="deleteSprint(s)">Delete</button></td>
+            <td style="display:flex;gap:6px">
+              <button class="ghost" @click="completeSprint(s)">Complete</button>
+              <button class="danger" @click="deleteSprint(s)">Delete</button>
+            </td>
           </tr>
         </tbody>
       </table>

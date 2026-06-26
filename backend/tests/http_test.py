@@ -170,6 +170,20 @@ async def main():
         assert len((await c.get(f"/api/tasks/{t1['id']}/history", headers=h)).json()) == 2
         print("✓ task move history: status changes logged newest-first, same-column reorder ignored")
 
+        # complete sprint: deletes only THIS sprint's done tasks, marks it completed
+        csp = (await c.post("/api/sprints", json={"name": "Done Sprint", "start_date": "2026-12-07"}, headers=h)).json()
+        csid = csp["id"]
+        done_in = (await c.post("/api/tasks", json={"title": "done in sprint", "status": "Done", "sprint_id": csid}, headers=h)).json()
+        todo_in = (await c.post("/api/tasks", json={"title": "todo in sprint", "sprint_id": csid}, headers=h)).json()
+        done_backlog = (await c.post("/api/tasks", json={"title": "done backlog", "status": "Done"}, headers=h)).json()
+        comp = (await c.post(f"/api/sprints/{csid}/complete", headers=h)).json()
+        assert comp["deleted"] == 1, comp
+        assert comp["sprint"]["status"] == "completed", comp
+        assert (await c.get(f"/api/tasks/{done_in['id']}", headers=h)).status_code == 404
+        assert (await c.get(f"/api/tasks/{todo_in['id']}", headers=h)).status_code == 200
+        assert (await c.get(f"/api/tasks/{done_backlog['id']}", headers=h)).status_code == 200
+        print("✓ complete sprint: deletes only the sprint's done tasks, marks it completed")
+
         # role enforcement: member created, member cannot create users
         await c.post("/api/users", json={
             "username": "member1", "email": "m@e.com", "password": "secret1", "role": "member",

@@ -92,6 +92,33 @@ async def update_sprint(sprint_id: str, payload: SprintUpdate, _=Depends(require
     return serialize(res)
 
 
+@router.post("/{sprint_id}/complete")
+async def complete_sprint(sprint_id: str, _=Depends(require_manager)):
+    """Mark a sprint completed and permanently delete its done tasks.
+
+    Only tasks in THIS sprint whose status is a done column are removed;
+    backlog and other sprints are left untouched.
+    """
+    db = get_db()
+    sprint = await db.sprints.find_one({"_id": oid(sprint_id)})
+    if not sprint:
+        raise HTTPException(status_code=404, detail="Sprint not found")
+
+    cols = await db.status_columns.find().sort("order", 1).to_list(100)
+    done_keys = [c["key"] for c in cols if c.get("is_done")]
+    if not done_keys and cols:
+        done_keys = [cols[-1]["key"]]  # fallback: treat the last column as done
+
+    res = await db.tasks.delete_many(
+        {"sprint_id": sprint_id, "status": {"$in": done_keys}}
+    )
+    await db.sprints.update_one(
+        {"_id": oid(sprint_id)}, {"$set": {"status": "completed"}}
+    )
+    sprint = await db.sprints.find_one({"_id": oid(sprint_id)})
+    return {"deleted": res.deleted_count, "sprint": serialize(sprint)}
+
+
 @router.delete("/{sprint_id}", status_code=204)
 async def delete_sprint(sprint_id: str, _=Depends(require_manager)):
     res = await get_db().sprints.delete_one({"_id": oid(sprint_id)})
