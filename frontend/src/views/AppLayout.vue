@@ -4,6 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import NotificationBell from '@/components/NotificationBell.vue'
+import BoardSwitcher from '@/components/BoardSwitcher.vue'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -99,6 +100,7 @@ function logout() {
         ☰
       </button>
       <div class="brand">📋 TaskFlow</div>
+      <BoardSwitcher />
       <div class="spacer" />
       <NotificationBell />
       <ThemeToggle />

@@ -1,7 +1,9 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import client from '@/api/client'
+import { useBoardStore } from '@/stores/board'
 
+const board = useBoardStore()
 const stats = ref(null)
 const sprints = ref([])
 const users = ref([])
@@ -12,18 +14,30 @@ const userMap = computed(() => Object.fromEntries(users.value.map((u) => [u.id, 
 
 async function load() {
   loading.value = true
-  const params = selectedSprint.value ? { sprint_id: selectedSprint.value } : {}
+  const params = { board_id: board.activeId }
+  if (selectedSprint.value) params.sprint_id = selectedSprint.value
   const { data } = await client.get('/api/dashboard/overview', { params })
   stats.value = data
   loading.value = false
 }
 
-onMounted(async () => {
-  const [s, u] = await Promise.all([client.get('/api/sprints'), client.get('/api/users')])
+async function loadAll() {
+  const [s, u] = await Promise.all([
+    client.get('/api/sprints', { params: { board_id: board.activeId } }),
+    client.get('/api/users'),
+  ])
   sprints.value = s.data
   users.value = u.data
+  selectedSprint.value = ''
   await load()
+}
+
+onMounted(async () => {
+  await board.load()
+  await loadAll()
 })
+
+watch(() => board.activeId, loadAll)
 
 function maxVal(obj) {
   const vals = Object.values(obj || {})
