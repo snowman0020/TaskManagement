@@ -44,6 +44,7 @@ async def create_sprint(payload: SprintCreate, _=Depends(require_manager)):
         "weeks": payload.weeks,
         "goal": payload.goal,
         "status": "planned",
+        "manday": payload.manday,
     }
     res = await db.sprints.insert_one(doc)
     doc["_id"] = res.inserted_id
@@ -55,7 +56,11 @@ async def generate_sprints(payload: SprintGenerate, _=Depends(require_manager)):
     """Auto-create consecutive 2-week (Mon-Fri) sprints."""
     db = get_db()
     sprints = build_sprints(
-        payload.start_date, payload.count, payload.weeks, payload.name_prefix
+        payload.start_date,
+        payload.count,
+        payload.weeks,
+        payload.name_prefix,
+        payload.manday,
     )
     # continue numbering past any existing "<prefix> N" sprints so repeated
     # calls extend the schedule instead of silently colliding on the unique name.

@@ -27,7 +27,11 @@ def _to_dt(d: date, end_of_day: bool = False) -> datetime:
 
 
 def build_sprints(
-    start: date, count: int, weeks: int = 2, name_prefix: str = "Sprint"
+    start: date,
+    count: int,
+    weeks: int = 2,
+    name_prefix: str = "Sprint",
+    manday: float | None = None,
 ) -> list[dict]:
     """Generate `count` consecutive sprints. Each starts on a Monday and ends
     on the Friday of its final week. The next sprint starts the following
@@ -49,6 +53,7 @@ def build_sprints(
                 "weeks": weeks,
                 "goal": "",
                 "status": "planned",
+                "manday": manday,
             }
         )
         cur = cur + timedelta(weeks=weeks)  # next Monday

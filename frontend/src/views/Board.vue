@@ -13,6 +13,7 @@ const board = ref({}) // { statusKey: [tasks] }
 const users = ref([])
 const sprints = ref([])
 const selectedSprint = ref('')
+const selectedAssignee = ref('') // '' = all, 'none' = unassigned, otherwise a user id
 const loading = ref(true)
 const modalOpen = ref(false)
 const editingTask = ref(null)
@@ -21,9 +22,16 @@ const userMap = computed(() =>
   Object.fromEntries(users.value.map((u) => [u.id, u]))
 )
 
+// other users for the filter row (the current user gets a dedicated "Me" chip)
+const otherUsers = computed(() =>
+  users.value.filter((u) => u.id !== auth.user?.id)
+)
+
 async function loadBoard() {
   loading.value = true
-  const params = selectedSprint.value ? { sprint_id: selectedSprint.value } : {}
+  const params = {}
+  if (selectedSprint.value) params.sprint_id = selectedSprint.value
+  if (selectedAssignee.value) params.assignee_id = selectedAssignee.value
   const { data } = await client.get('/api/tasks/board', { params })
   columns.value = data.columns
   // ensure every column has an array (so empty columns are droppable)
@@ -125,6 +133,11 @@ async function deleteTask(task) {
 function wipExceeded(col) {
   return col.wip_limit && (board.value[col.key]?.length || 0) > col.wip_limit
 }
+
+function setAssignee(val) {
+  selectedAssignee.value = val
+  loadBoard()
+}
 </script>
 
 <template>
@@ -137,6 +150,31 @@ function wipExceeded(col) {
       </select>
       <button v-if="canEdit" @click="openNew">+ New Task</button>
     </div>
+  </div>
+
+  <div class="filter-row">
+    <span class="chip" :class="{ active: selectedAssignee === '' }" @click="setAssignee('')">All</span>
+    <span
+      v-if="auth.user"
+      class="chip"
+      :class="{ active: selectedAssignee === auth.user.id }"
+      @click="setAssignee(auth.user.id)"
+    >
+      <span class="avatar">{{ initials(auth.user.id) }}</span> Me
+    </span>
+    <span
+      v-for="u in otherUsers"
+      :key="u.id"
+      class="chip"
+      :class="{ active: selectedAssignee === u.id }"
+      :title="u.username"
+      @click="setAssignee(u.id)"
+    >
+      <span class="avatar">{{ initials(u.id) }}</span> {{ u.full_name || u.username }}
+    </span>
+    <span class="chip" :class="{ active: selectedAssignee === 'none' }" @click="setAssignee('none')">
+      Unassigned
+    </span>
   </div>
 
   <div v-if="loading">Loading…</div>

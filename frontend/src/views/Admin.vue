@@ -98,8 +98,13 @@ async function deleteColumn(c) {
 
 /* ---------- Sprints ---------- */
 const sprints = ref([])
-const gen = ref({ start_date: '', count: 6, weeks: 2, name_prefix: 'Sprint' })
+const gen = ref({ start_date: '', count: 6, weeks: 2, name_prefix: 'Sprint', manday: null })
 const sprintError = ref('')
+
+// '' (cleared number input) -> null so "not set" stays distinct from 0 capacity
+function normManday(v) {
+  return v === '' || v == null ? null : v
+}
 
 async function loadSprints() {
   sprints.value = (await client.get('/api/sprints')).data
@@ -107,8 +112,19 @@ async function loadSprints() {
 async function generateSprints() {
   sprintError.value = ''
   try {
-    const { data } = await client.post('/api/sprints/generate', gen.value)
+    const payload = { ...gen.value, manday: normManday(gen.value.manday) }
+    const { data } = await client.post('/api/sprints/generate', payload)
     if (data.created === 0) sprintError.value = 'No new sprints created (names already exist).'
+  } catch (e) {
+    sprintError.value = e.response?.data?.detail || 'Failed'
+  } finally {
+    await loadSprints()
+  }
+}
+async function saveManday(s) {
+  sprintError.value = ''
+  try {
+    await client.patch(`/api/sprints/${s.id}`, { manday: normManday(s.manday) })
   } catch (e) {
     sprintError.value = e.response?.data?.detail || 'Failed'
   } finally {
@@ -257,6 +273,10 @@ onMounted(() => {
           <label>Name prefix</label>
           <input v-model="gen.name_prefix" />
         </div>
+        <div>
+          <label>Manday (default)</label>
+          <input v-model.number="gen.manday" type="number" min="0" step="0.5" placeholder="optional" />
+        </div>
         <div style="display:flex;align-items:flex-end">
           <button @click="generateSprints" :disabled="!gen.start_date">Generate</button>
         </div>
@@ -266,13 +286,17 @@ onMounted(() => {
 
     <div class="card">
       <table>
-        <thead><tr><th>Name</th><th>Start</th><th>End</th><th>Working Days</th><th>Status</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Start</th><th>End</th><th>Working Days</th><th>Manday</th><th>Status</th><th></th></tr></thead>
         <tbody>
           <tr v-for="s in sprints" :key="s.id">
             <td>{{ s.name }}<br /><small style="color:var(--muted)">{{ s.goal }}</small></td>
             <td>{{ fmt(s.start_date) }}</td>
             <td>{{ fmt(s.end_date) }}</td>
             <td>{{ s.working_days }}</td>
+            <td style="display:flex;gap:6px;align-items:center">
+              <input v-model.number="s.manday" type="number" min="0" step="0.5" style="width:80px" />
+              <button class="ghost" @click="saveManday(s)">Save</button>
+            </td>
             <td>
               <select :value="s.status" @change="setSprintStatus(s, $event.target.value)">
                 <option value="planned">planned</option>

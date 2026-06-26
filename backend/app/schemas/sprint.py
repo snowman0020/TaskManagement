@@ -9,6 +9,7 @@ class SprintCreate(BaseModel):
     start_date: date
     goal: str = ""
     weeks: int = Field(default=2, ge=1, le=4)  # sprint length in weeks
+    manday: float | None = Field(default=None, ge=0)  # planned capacity (man-days)
 
 
 class SprintGenerate(BaseModel):
@@ -17,12 +18,14 @@ class SprintGenerate(BaseModel):
     count: int = Field(default=6, ge=1, le=52)
     weeks: int = Field(default=2, ge=1, le=4)
     name_prefix: str = "Sprint"
+    manday: float | None = Field(default=None, ge=0)  # default applied to all
 
 
 class SprintUpdate(BaseModel):
     name: str | None = None
     goal: str | None = None
     status: Literal["planned", "active", "completed"] | None = None
+    manday: float | None = Field(default=None, ge=0)
 
 
 class StatusColumnCreate(BaseModel):

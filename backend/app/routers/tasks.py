@@ -53,13 +53,25 @@ async def list_tasks(
 
 
 @router.get("/board")
-async def board(sprint_id: str | None = Query(default=None), _=Depends(get_current_user)):
-    """Return columns + tasks grouped by status, ready for the Kanban board."""
+async def board(
+    sprint_id: str | None = Query(default=None),
+    assignee_id: str | None = Query(default=None),
+    _=Depends(get_current_user),
+):
+    """Return columns + tasks grouped by status, ready for the Kanban board.
+
+    `assignee_id` filters to one person's tasks; the sentinel "none" returns
+    tasks with no assignee.
+    """
     db = get_db()
     cols = await db.status_columns.find().sort("order", 1).to_list(100)
     query: dict = {}
     if sprint_id:
         query["sprint_id"] = sprint_id
+    if assignee_id == "none":
+        query["assignee_id"] = None  # matches null or missing
+    elif assignee_id:
+        query["assignee_id"] = assignee_id
     tasks = await db.tasks.find(query).sort("order", 1).to_list(5000)
 
     grouped: dict[str, list] = {c["key"]: [] for c in cols}
