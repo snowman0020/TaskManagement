@@ -230,6 +230,23 @@ async def main():
         assert (await c.delete(f"/api/tasks/{t1['id']}", headers=vh)).status_code == 403
         print("✓ RBAC: viewer can read board but blocked (403) from create/move/delete")
 
+        # task comments + one-level replies
+        cm = (await c.post(f"/api/tasks/{t1['id']}/comments", json={"body": "first comment"}, headers=h)).json()
+        rp = (await c.post(f"/api/tasks/{t1['id']}/comments", json={"body": "a reply", "parent_id": cm["id"]}, headers=h)).json()
+        nested = (await c.get(f"/api/tasks/{t1['id']}/comments", headers=h)).json()
+        assert len(nested) == 1 and nested[0]["id"] == cm["id"]
+        assert len(nested[0]["replies"]) == 1 and nested[0]["replies"][0]["body"] == "a reply"
+        # reply-to-reply rejected
+        assert (await c.post(f"/api/tasks/{t1['id']}/comments", json={"body": "x", "parent_id": rp["id"]}, headers=h)).status_code == 400
+        # viewer cannot comment
+        assert (await c.post(f"/api/tasks/{t1['id']}/comments", json={"body": "nope"}, headers=vh)).status_code == 403
+        # a member cannot delete someone else's comment; an admin/manager can
+        assert (await c.delete(f"/api/tasks/{t1['id']}/comments/{cm['id']}", headers=mh)).status_code == 403
+        assert (await c.delete(f"/api/tasks/{t1['id']}/comments/{cm['id']}", headers=h)).status_code == 204
+        # deleting the top-level comment removed its reply too
+        assert (await c.get(f"/api/tasks/{t1['id']}/comments", headers=h)).json() == []
+        print("✓ comments: nested replies, reply-to-reply 400, viewer 403, RBAC delete, cascade")
+
         # admin cannot demote/lock out the last admin
         me = (await c.get("/api/auth/me", headers=h)).json()
         lock = await c.patch(f"/api/users/{me['id']}", json={"role": "viewer"}, headers=h)

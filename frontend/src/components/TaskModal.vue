@@ -3,6 +3,7 @@ import { ref, watch, onMounted } from 'vue'
 import client from '@/api/client'
 import ImageUploader from '@/components/ImageUploader.vue'
 import DateField from '@/components/DateField.vue'
+import TaskComments from '@/components/TaskComments.vue'
 import { formatDateTime } from '@/utils/datetime'
 
 const props = defineProps({
@@ -145,6 +146,7 @@ function save() {
         </div>
         <p v-else class="hint">No moves yet.</p>
       </div>
+      <TaskComments v-if="!isNew()" :task-id="task.id" />
       <div class="modal-actions">
         <button v-if="!isNew()" class="danger" @click="emit('delete', task)">Delete</button>
         <button class="ghost" @click="emit('close')">Cancel</button>

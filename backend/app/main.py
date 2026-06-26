@@ -7,6 +7,7 @@ from app.config import settings
 from app.database import close_mongo_connection, connect_to_mongo
 from app.routers import (
     auth,
+    comments,
     dashboard,
     sprints,
     status_columns,
@@ -39,6 +40,7 @@ app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(tasks.router)
 app.include_router(task_images.router)
+app.include_router(comments.router)
 app.include_router(sprints.router)
 app.include_router(status_columns.router)
 app.include_router(dashboard.router)
