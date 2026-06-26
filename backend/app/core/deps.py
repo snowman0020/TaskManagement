@@ -47,3 +47,5 @@ def require_roles(*roles: Role):
 
 require_admin = require_roles(Role.ADMIN)
 require_manager = require_roles(Role.ADMIN, Role.MANAGER)
+# member-or-above may create/move/edit tasks; viewer is read-only
+require_member = require_roles(Role.ADMIN, Role.MANAGER, Role.MEMBER)

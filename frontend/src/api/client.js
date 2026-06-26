@@ -11,12 +11,16 @@ client.interceptors.request.use((config) => {
   return config
 })
 
-// Bounce to login on auth failure
+// Bounce to login on auth failure (expired token, or a disabled account)
 client.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response && err.response.status === 401) {
+    const status = err.response?.status
+    const disabled =
+      status === 403 && err.response?.data?.detail === 'User is disabled'
+    if (status === 401 || disabled) {
       localStorage.removeItem('token')
+      localStorage.removeItem('user')
       if (location.pathname !== '/login') location.href = '/login'
     }
     return Promise.reject(err)

@@ -1,4 +1,5 @@
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -7,7 +8,7 @@ class SprintCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     start_date: date
     goal: str = ""
-    weeks: int = 2  # sprint length in weeks
+    weeks: int = Field(default=2, ge=1, le=4)  # sprint length in weeks
 
 
 class SprintGenerate(BaseModel):
@@ -21,7 +22,7 @@ class SprintGenerate(BaseModel):
 class SprintUpdate(BaseModel):
     name: str | None = None
     goal: str | None = None
-    status: str | None = None  # planned | active | completed
+    status: Literal["planned", "active", "completed"] | None = None
 
 
 class StatusColumnCreate(BaseModel):

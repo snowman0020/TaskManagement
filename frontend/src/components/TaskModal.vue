@@ -34,6 +34,8 @@ function save() {
   const payload = { ...form.value }
   if (payload.assignee_id === '') payload.assignee_id = null
   if (payload.sprint_id === '') payload.sprint_id = null
+  // a cleared number input yields '' — normalize so the int|None backend accepts it
+  if (payload.story_points === '') payload.story_points = null
   emit('save', payload)
 }
 </script>

@@ -25,17 +25,35 @@ async function createUser() {
   }
 }
 async function updateRole(u, role) {
-  await client.patch(`/api/users/${u.id}`, { role })
-  await loadUsers()
+  userError.value = ''
+  try {
+    await client.patch(`/api/users/${u.id}`, { role })
+  } catch (e) {
+    userError.value = e.response?.data?.detail || 'Failed'
+  } finally {
+    await loadUsers() // re-sync :value-bound dropdown to server truth
+  }
 }
 async function toggleActive(u) {
-  await client.patch(`/api/users/${u.id}`, { is_active: !u.is_active })
-  await loadUsers()
+  userError.value = ''
+  try {
+    await client.patch(`/api/users/${u.id}`, { is_active: !u.is_active })
+  } catch (e) {
+    userError.value = e.response?.data?.detail || 'Failed'
+  } finally {
+    await loadUsers()
+  }
 }
 async function deleteUser(u) {
   if (!confirm(`Delete ${u.username}?`)) return
-  await client.delete(`/api/users/${u.id}`)
-  await loadUsers()
+  userError.value = ''
+  try {
+    await client.delete(`/api/users/${u.id}`)
+  } catch (e) {
+    userError.value = e.response?.data?.detail || 'Failed'
+  } finally {
+    await loadUsers()
+  }
 }
 
 /* ---------- Status Columns ---------- */
@@ -57,10 +75,16 @@ async function createColumn() {
   }
 }
 async function saveColumn(c) {
-  await client.patch(`/api/status-columns/${c.id}`, {
-    name: c.name, order: c.order, wip_limit: c.wip_limit, is_done: c.is_done,
-  })
-  await loadColumns()
+  colError.value = ''
+  try {
+    await client.patch(`/api/status-columns/${c.id}`, {
+      name: c.name, order: c.order, wip_limit: c.wip_limit, is_done: c.is_done,
+    })
+  } catch (e) {
+    colError.value = e.response?.data?.detail || 'Failed'
+  } finally {
+    await loadColumns()
+  }
 }
 async function deleteColumn(c) {
   colError.value = ''
@@ -75,22 +99,42 @@ async function deleteColumn(c) {
 /* ---------- Sprints ---------- */
 const sprints = ref([])
 const gen = ref({ start_date: '', count: 6, weeks: 2, name_prefix: 'Sprint' })
+const sprintError = ref('')
 
 async function loadSprints() {
   sprints.value = (await client.get('/api/sprints')).data
 }
 async function generateSprints() {
-  await client.post('/api/sprints/generate', gen.value)
-  await loadSprints()
+  sprintError.value = ''
+  try {
+    const { data } = await client.post('/api/sprints/generate', gen.value)
+    if (data.created === 0) sprintError.value = 'No new sprints created (names already exist).'
+  } catch (e) {
+    sprintError.value = e.response?.data?.detail || 'Failed'
+  } finally {
+    await loadSprints()
+  }
 }
 async function setSprintStatus(s, status) {
-  await client.patch(`/api/sprints/${s.id}`, { status })
-  await loadSprints()
+  sprintError.value = ''
+  try {
+    await client.patch(`/api/sprints/${s.id}`, { status })
+  } catch (e) {
+    sprintError.value = e.response?.data?.detail || 'Failed'
+  } finally {
+    await loadSprints()
+  }
 }
 async function deleteSprint(s) {
   if (!confirm(`Delete ${s.name}?`)) return
-  await client.delete(`/api/sprints/${s.id}`)
-  await loadSprints()
+  sprintError.value = ''
+  try {
+    await client.delete(`/api/sprints/${s.id}`)
+  } catch (e) {
+    sprintError.value = e.response?.data?.detail || 'Failed'
+  } finally {
+    await loadSprints()
+  }
 }
 function fmt(d) {
   return d ? new Date(d).toISOString().slice(0, 10) : ''
@@ -147,7 +191,7 @@ onMounted(() => {
                 <option value="viewer">viewer</option>
               </select>
             </td>
-            <td><button class="ghost" @click="toggleActive(u)">{{ u.is_active ? 'Yes' : 'No' }}</button></td>
+            <td><button class="ghost" :disabled="!auth.isAdmin" @click="toggleActive(u)">{{ u.is_active ? 'Yes' : 'No' }}</button></td>
             <td><button v-if="auth.isAdmin" class="danger" @click="deleteUser(u)">Delete</button></td>
           </tr>
         </tbody>
@@ -217,6 +261,7 @@ onMounted(() => {
           <button @click="generateSprints" :disabled="!gen.start_date">Generate</button>
         </div>
       </div>
+      <p v-if="sprintError" class="error">{{ sprintError }}</p>
     </div>
 
     <div class="card">

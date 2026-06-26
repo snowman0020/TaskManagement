@@ -3,6 +3,10 @@ import { ref, onMounted, computed } from 'vue'
 import draggable from 'vuedraggable'
 import client from '@/api/client'
 import TaskModal from '@/components/TaskModal.vue'
+import { useAuthStore } from '@/stores/auth'
+
+const auth = useAuthStore()
+const canEdit = computed(() => auth.canEdit)
 
 const columns = ref([])
 const board = ref({}) // { statusKey: [tasks] }
@@ -58,16 +62,24 @@ async function onColumnChange(statusKey) {
     order: idx,
   }))
   if (items.length === 0) return
-  await client.patch('/api/tasks/reorder/bulk', { items })
-  // refresh status field locally so leadtime badges stay accurate
-  for (const t of board.value[statusKey]) t.status = statusKey
+  try {
+    await client.patch('/api/tasks/reorder/bulk', { items })
+    // refresh status field locally so leadtime badges stay accurate
+    for (const t of board.value[statusKey]) t.status = statusKey
+  } catch (e) {
+    // revert the optimistic local move by re-fetching authoritative state
+    await loadBoard()
+    alert('Could not save the change. The board has been refreshed.')
+  }
 }
 
 function openNew() {
+  if (!canEdit.value) return
   editingTask.value = null
   modalOpen.value = true
 }
 function openTask(task) {
+  if (!canEdit.value) return // viewers are read-only
   editingTask.value = task
   modalOpen.value = true
 }
@@ -103,7 +115,7 @@ function wipExceeded(col) {
         <option value="">All sprints / Backlog</option>
         <option v-for="s in sprints" :key="s.id" :value="s.id">{{ s.name }}</option>
       </select>
-      <button @click="openNew">+ New Task</button>
+      <button v-if="canEdit" @click="openNew">+ New Task</button>
     </div>
   </div>
 
@@ -123,6 +135,7 @@ function wipExceeded(col) {
         item-key="id"
         :animation="150"
         ghost-class="ghost-card"
+        :disabled="!canEdit"
         @change="onColumnChange(col.key)"
       >
         <template #item="{ element }">
