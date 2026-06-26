@@ -1,4 +1,14 @@
 from bson import ObjectId
+from bson.errors import InvalidId
+from fastapi import HTTPException
+
+
+def oid(value: str) -> ObjectId:
+    """Parse a path string into an ObjectId, returning HTTP 400 (not 500) on bad input."""
+    try:
+        return ObjectId(value)
+    except (InvalidId, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid id")
 
 
 def serialize(doc: dict | None) -> dict | None:

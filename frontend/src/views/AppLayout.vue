@@ -1,9 +1,13 @@
 <script setup>
+import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
 const router = useRouter()
+
+// refresh cached role/profile so admin-side role changes take effect without re-login
+onMounted(() => auth.refresh())
 
 function logout() {
   auth.logout()

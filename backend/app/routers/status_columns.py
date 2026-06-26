@@ -1,9 +1,8 @@
-from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.deps import get_current_user, require_manager
 from app.database import get_db
-from app.schemas.common import serialize, serialize_list
+from app.schemas.common import oid, serialize, serialize_list
 from app.schemas.sprint import StatusColumnCreate, StatusColumnUpdate
 
 router = APIRouter(prefix="/api/status-columns", tags=["status-columns"])
@@ -32,7 +31,7 @@ async def update_column(column_id: str, payload: StatusColumnUpdate, _=Depends(r
     if not data:
         raise HTTPException(status_code=400, detail="Nothing to update")
     res = await get_db().status_columns.find_one_and_update(
-        {"_id": ObjectId(column_id)}, {"$set": data}, return_document=True
+        {"_id": oid(column_id)}, {"$set": data}, return_document=True
     )
     if not res:
         raise HTTPException(status_code=404, detail="Column not found")
@@ -42,11 +41,11 @@ async def update_column(column_id: str, payload: StatusColumnUpdate, _=Depends(r
 @router.delete("/{column_id}", status_code=204)
 async def delete_column(column_id: str, _=Depends(require_manager)):
     db = get_db()
-    col = await db.status_columns.find_one({"_id": ObjectId(column_id)})
+    col = await db.status_columns.find_one({"_id": oid(column_id)})
     if not col:
         raise HTTPException(status_code=404, detail="Column not found")
     if await db.tasks.count_documents({"status": col["key"]}) > 0:
         raise HTTPException(
             status_code=400, detail="Cannot delete a column that still has tasks"
         )
-    await db.status_columns.delete_one({"_id": ObjectId(column_id)})
+    await db.status_columns.delete_one({"_id": oid(column_id)})

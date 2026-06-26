@@ -1,12 +1,10 @@
 from datetime import datetime, timezone
 
-from bson import ObjectId
-from bson.errors import InvalidId
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, require_member
 from app.database import get_db, next_sequence
-from app.schemas.common import serialize, serialize_list
+from app.schemas.common import oid, serialize, serialize_list
 from app.schemas.task import TaskCreate, TaskMove, TaskReorder, TaskUpdate
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -14,26 +12,24 @@ router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 TASK_PREFIX = "TASK"
 
 
-def _oid(value: str) -> ObjectId:
-    try:
-        return ObjectId(value)
-    except (InvalidId, TypeError):
-        raise HTTPException(status_code=400, detail="Invalid id")
-
-
-async def _default_status() -> tuple[str, str]:
-    """Return (first_status_key, done_status_key)."""
+async def _status_context() -> tuple[str, str, set[str]]:
+    """Return (first_status_key, done_status_key, {valid_keys})."""
     db = get_db()
     cols = await db.status_columns.find().sort("order", 1).to_list(100)
     if not cols:
-        return "TODO", "Done"
+        return "TODO", "Done", {"TODO", "InProgress", "QA", "Done"}
     first = cols[0]["key"]
     done = next((c["key"] for c in cols if c.get("is_done")), cols[-1]["key"])
-    return first, done
+    return first, done, {c["key"] for c in cols}
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _ensure_valid_status(status: str, valid: set[str]) -> None:
+    if status not in valid:
+        raise HTTPException(status_code=400, detail=f"Unknown status: {status}")
 
 
 @router.get("")
@@ -76,16 +72,21 @@ async def board(sprint_id: str | None = Query(default=None), _=Depends(get_curre
 
 
 @router.post("", status_code=201)
-async def create_task(payload: TaskCreate, current=Depends(get_current_user)):
+async def create_task(payload: TaskCreate, current=Depends(require_member)):
     db = get_db()
-    first_status, _done = await _default_status()
+    first_status, done_status, valid = await _status_context()
     status = payload.status or first_status
+    _ensure_valid_status(status, valid)
 
     seq = await next_sequence("task")
     task_number = f"{TASK_PREFIX}-{seq}"
 
-    # place new task at the top of its column
-    order = _now().timestamp()
+    # place the new task at the TOP of its column: one below the current minimum
+    # order in the same column (status + sprint), consistent with the 0..N
+    # integer scheme written by the bulk-reorder endpoint.
+    col_query = {"status": status, "sprint_id": payload.sprint_id}
+    top = await db.tasks.find(col_query).sort("order", 1).limit(1).to_list(1)
+    order = (top[0]["order"] - 1) if top else 0
 
     doc = {
         "task_number": task_number,
@@ -104,6 +105,9 @@ async def create_task(payload: TaskCreate, current=Depends(get_current_user)):
         "started_at": None,
         "done_at": None,
     }
+    # stamp started_at/done_at when a task is created directly in a non-first /
+    # done column so leadtime & cycle-time metrics stay accurate.
+    await _apply_status_timestamps(doc, status, doc)
     res = await db.tasks.insert_one(doc)
     doc["_id"] = res.inserted_id
     return serialize(doc)
@@ -111,7 +115,7 @@ async def create_task(payload: TaskCreate, current=Depends(get_current_user)):
 
 @router.get("/{task_id}")
 async def get_task(task_id: str, _=Depends(get_current_user)):
-    doc = await get_db().tasks.find_one({"_id": _oid(task_id)})
+    doc = await get_db().tasks.find_one({"_id": oid(task_id)})
     if not doc:
         raise HTTPException(status_code=404, detail="Task not found")
     return serialize(doc)
@@ -119,8 +123,14 @@ async def get_task(task_id: str, _=Depends(get_current_user)):
 
 async def _apply_status_timestamps(task: dict, new_status: str, update: dict) -> None:
     """Record started_at / done_at for leadtime metrics on status change."""
-    first_status, done_status = await _default_status()
-    if new_status != first_status and not task.get("started_at"):
+    first_status, done_status, _valid = await _status_context()
+    # only stamp started_at for genuine in-progress columns (not a straight
+    # first -> done jump, which would make cycle time meaninglessly ~0)
+    if (
+        new_status != first_status
+        and new_status != done_status
+        and not task.get("started_at")
+    ):
         update["started_at"] = _now()
     if new_status == done_status and not task.get("done_at"):
         update["done_at"] = _now()
@@ -129,48 +139,56 @@ async def _apply_status_timestamps(task: dict, new_status: str, update: dict) ->
 
 
 @router.patch("/{task_id}")
-async def update_task(task_id: str, payload: TaskUpdate, _=Depends(get_current_user)):
+async def update_task(task_id: str, payload: TaskUpdate, _=Depends(require_member)):
     db = get_db()
-    task = await db.tasks.find_one({"_id": _oid(task_id)})
+    task = await db.tasks.find_one({"_id": oid(task_id)})
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
     data = payload.model_dump(exclude_unset=True)
     update = {k: v for k, v in data.items()}
     if "status" in update and update["status"] != task.get("status"):
+        _, _done, valid = await _status_context()
+        _ensure_valid_status(update["status"], valid)
         await _apply_status_timestamps(task, update["status"], update)
     update["updated_at"] = _now()
 
     res = await db.tasks.find_one_and_update(
-        {"_id": _oid(task_id)}, {"$set": update}, return_document=True
+        {"_id": oid(task_id)}, {"$set": update}, return_document=True
     )
     return serialize(res)
 
 
 @router.patch("/{task_id}/move")
-async def move_task(task_id: str, payload: TaskMove, _=Depends(get_current_user)):
+async def move_task(task_id: str, payload: TaskMove, _=Depends(require_member)):
     """Drag-and-drop: change a task's status column and ordering position."""
     db = get_db()
-    task = await db.tasks.find_one({"_id": _oid(task_id)})
+    task = await db.tasks.find_one({"_id": oid(task_id)})
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+
+    _, _done, valid = await _status_context()
+    _ensure_valid_status(payload.status, valid)
 
     update: dict = {"status": payload.status, "order": payload.order, "updated_at": _now()}
     if payload.status != task.get("status"):
         await _apply_status_timestamps(task, payload.status, update)
 
     res = await db.tasks.find_one_and_update(
-        {"_id": _oid(task_id)}, {"$set": update}, return_document=True
+        {"_id": oid(task_id)}, {"$set": update}, return_document=True
     )
     return serialize(res)
 
 
 @router.patch("/reorder/bulk")
-async def reorder_tasks(payload: TaskReorder, _=Depends(get_current_user)):
+async def reorder_tasks(payload: TaskReorder, _=Depends(require_member)):
     """Persist a batch of order/status changes after a drag-and-drop drop."""
     db = get_db()
+    _, _done, valid = await _status_context()
     for item in payload.items:
-        task = await db.tasks.find_one({"_id": _oid(item.id)})
+        _ensure_valid_status(item.status, valid)
+    for item in payload.items:
+        task = await db.tasks.find_one({"_id": oid(item.id)})
         if not task:
             continue
         update: dict = {
@@ -180,12 +198,12 @@ async def reorder_tasks(payload: TaskReorder, _=Depends(get_current_user)):
         }
         if item.status != task.get("status"):
             await _apply_status_timestamps(task, item.status, update)
-        await db.tasks.update_one({"_id": _oid(item.id)}, {"$set": update})
+        await db.tasks.update_one({"_id": oid(item.id)}, {"$set": update})
     return {"updated": len(payload.items)}
 
 
 @router.delete("/{task_id}", status_code=204)
-async def delete_task(task_id: str, _=Depends(get_current_user)):
-    res = await get_db().tasks.delete_one({"_id": _oid(task_id)})
+async def delete_task(task_id: str, _=Depends(require_member)):
+    res = await get_db().tasks.delete_one({"_id": oid(task_id)})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Task not found")
