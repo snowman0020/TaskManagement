@@ -116,6 +116,36 @@ async def main():
         print(f"✓ dashboard: {ov['done_tasks']}/{ov['total_tasks']} done, "
               f"completion {ov['completion_rate']}%, leadtime samples={ov['leadtime_hours']['samples']}")
 
+        # assignee filter on the board (by-user + unassigned sentinel)
+        me = (await c.get("/api/auth/me", headers=h)).json()
+        mine = (await c.post("/api/tasks", json={"title": "mine", "assignee_id": me["id"]}, headers=h)).json()
+        b_me = (await c.get(f"/api/tasks/board?assignee_id={me['id']}", headers=h)).json()
+        me_tasks = [t for col in b_me["tasks"].values() for t in col]
+        assert mine["id"] in [t["id"] for t in me_tasks]
+        assert all(t.get("assignee_id") == me["id"] for t in me_tasks)
+        b_none = (await c.get("/api/tasks/board?assignee_id=none", headers=h)).json()
+        none_tasks = [t for col in b_none["tasks"].values() for t in col]
+        assert mine["id"] not in [t["id"] for t in none_tasks]
+        assert all(not t.get("assignee_id") for t in none_tasks)
+        print("✓ board assignee filter: by-user returns only theirs, 'none' returns unassigned")
+
+        # sprint manday: create / patch / generate-default persist; negative rejected
+        sp = (await c.post("/api/sprints", json={
+            "name": "Manday Sprint", "start_date": "2026-09-07", "weeks": 2, "manday": 18.5,
+        }, headers=h)).json()
+        assert sp["manday"] == 18.5, sp
+        upd = (await c.patch(f"/api/sprints/{sp['id']}", json={"manday": 20}, headers=h)).json()
+        assert upd["manday"] == 20
+        gens = await c.post("/api/sprints/generate", json={
+            "start_date": "2026-10-05", "count": 2, "weeks": 2, "name_prefix": "Cap", "manday": 12,
+        }, headers=h)
+        assert all(s["manday"] == 12 for s in gens.json()["sprints"]), gens.text
+        bad = await c.post("/api/sprints", json={
+            "name": "Bad Manday", "start_date": "2026-11-02", "manday": -5,
+        }, headers=h)
+        assert bad.status_code == 422, bad.status_code
+        print("✓ sprint manday: create/patch/generate persist, negative rejected (422)")
+
         # role enforcement: member created, member cannot create users
         await c.post("/api/users", json={
             "username": "member1", "email": "m@e.com", "password": "secret1", "role": "member",
