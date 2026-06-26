@@ -84,15 +84,35 @@ function openTask(task) {
   modalOpen.value = true
 }
 
-async function saveTask(payload) {
+async function uploadImages(taskId, files) {
+  if (!files?.length) return
+  const fd = new FormData()
+  for (const f of files) fd.append('files', f)
+  await client.post(`/api/tasks/${taskId}/images`, fd)
+}
+
+async function saveTask(payload, pendingFiles = []) {
+  let taskId = payload.id
   if (payload.id) {
     await client.patch(`/api/tasks/${payload.id}`, payload)
   } else {
     if (selectedSprint.value && !payload.sprint_id) payload.sprint_id = selectedSprint.value
-    await client.post('/api/tasks', payload)
+    const { data } = await client.post('/api/tasks', payload)
+    taskId = data.id
   }
+  await uploadImages(taskId, pendingFiles)
   modalOpen.value = false
   await loadBoard()
+}
+
+// An image was added/removed inside the modal without saving the task — keep
+// the board's attachment badges in sync.
+async function onImagesChanged() {
+  await loadBoard()
+}
+
+function closeModal() {
+  modalOpen.value = false
 }
 
 async function deleteTask(task) {
@@ -145,6 +165,7 @@ function wipExceeded(col) {
             <div class="meta">
               <span class="badge" :class="element.priority">{{ element.priority }}</span>
               <span v-if="element.story_points" class="badge">{{ element.story_points }} pts</span>
+              <span v-if="element.images?.length" class="badge">📎 {{ element.images.length }}</span>
               <span style="flex:1"></span>
               <span v-if="element.assignee_id" class="avatar" :title="userMap[element.assignee_id]?.username">
                 {{ initials(element.assignee_id) }}
@@ -162,8 +183,9 @@ function wipExceeded(col) {
     :columns="columns"
     :users="users"
     :sprints="sprints"
-    @close="modalOpen = false"
+    @close="closeModal"
     @save="saveTask"
     @delete="deleteTask"
+    @images-changed="onImagesChanged"
   />
 </template>

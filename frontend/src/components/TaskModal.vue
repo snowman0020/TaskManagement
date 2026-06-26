@@ -1,5 +1,6 @@
 <script setup>
 import { ref, watch } from 'vue'
+import ImageUploader from '@/components/ImageUploader.vue'
 
 const props = defineProps({
   task: { type: Object, default: null },
@@ -7,9 +8,10 @@ const props = defineProps({
   users: { type: Array, default: () => [] },
   sprints: { type: Array, default: () => [] },
 })
-const emit = defineEmits(['close', 'save', 'delete'])
+const emit = defineEmits(['close', 'save', 'delete', 'images-changed'])
 
 const form = ref({})
+const pendingFiles = ref([])
 
 watch(
   () => props.task,
@@ -36,7 +38,7 @@ function save() {
   if (payload.sprint_id === '') payload.sprint_id = null
   // a cleared number input yields '' — normalize so the int|None backend accepts it
   if (payload.story_points === '') payload.story_points = null
-  emit('save', payload)
+  emit('save', payload, pendingFiles.value)
 }
 </script>
 
@@ -93,6 +95,11 @@ function save() {
           <input v-model.number="form.story_points" type="number" min="0" />
         </div>
       </div>
+      <ImageUploader
+        :task="task"
+        @update:pending="pendingFiles = $event"
+        @changed="emit('images-changed')"
+      />
       <div class="modal-actions">
         <button v-if="!isNew()" class="danger" @click="emit('delete', task)">Delete</button>
         <button class="ghost" @click="emit('close')">Cancel</button>

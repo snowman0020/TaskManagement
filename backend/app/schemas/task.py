@@ -3,6 +3,20 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
+class ImageMeta(BaseModel):
+    """An image attachment reference stored in a task's `images` array.
+
+    Binary data lives in the GridFS `task_images` bucket; `id` is the GridFS
+    file id rendered as a string.
+    """
+    id: str
+    filename: str
+    content_type: str
+    size: int
+    uploaded_by: str
+    uploaded_at: datetime
+
+
 class TaskCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     description: str = ""
