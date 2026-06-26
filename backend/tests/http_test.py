@@ -184,6 +184,25 @@ async def main():
         assert (await c.get(f"/api/tasks/{done_backlog['id']}", headers=h)).status_code == 200
         print("✓ complete sprint: deletes only the sprint's done tasks, marks it completed")
 
+        # status columns: drag-reorder persists, then restore original order
+        cols = (await c.get("/api/status-columns", headers=h)).json()
+        n = len(cols)
+        rev = [{"id": col["id"], "order": n - 1 - i} for i, col in enumerate(cols)]
+        assert (await c.patch("/api/status-columns/reorder", json={"items": rev}, headers=h)).json()["updated"] == n
+        cols2 = (await c.get("/api/status-columns", headers=h)).json()
+        assert [col["key"] for col in cols2] == [col["key"] for col in reversed(cols)]
+        await c.patch("/api/status-columns/reorder",
+                      json={"items": [{"id": col["id"], "order": i} for i, col in enumerate(cols)]}, headers=h)
+        print("✓ status columns reorder persists new order")
+
+        # edit a column key — tasks on it cascade to the new key; dup key rejected
+        newcol = (await c.post("/api/status-columns", json={"key": "Review", "name": "Review", "order": 99}, headers=h)).json()
+        rtask = (await c.post("/api/tasks", json={"title": "in review", "status": "Review"}, headers=h)).json()
+        assert (await c.patch(f"/api/status-columns/{newcol['id']}", json={"key": "CodeReview"}, headers=h)).status_code == 200
+        assert (await c.get(f"/api/tasks/{rtask['id']}", headers=h)).json()["status"] == "CodeReview"
+        assert (await c.patch(f"/api/status-columns/{newcol['id']}", json={"key": "Done"}, headers=h)).status_code == 409
+        print("✓ status column key edit cascades to tasks; duplicate key rejected")
+
         # role enforcement: member created, member cannot create users
         await c.post("/api/users", json={
             "username": "member1", "email": "m@e.com", "password": "secret1", "role": "member",

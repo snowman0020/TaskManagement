@@ -254,6 +254,7 @@ function setAssignee(val) {
               <span class="badge" :class="element.priority">{{ element.priority }}</span>
               <span v-if="element.story_points" class="badge">{{ element.story_points }} pts</span>
               <span v-if="element.images?.length" class="badge">📎 {{ element.images.length }}</span>
+              <span v-if="element.due_date" class="badge">📅 {{ String(element.due_date).slice(0, 10) }}</span>
               <span style="flex:1"></span>
               <span v-if="element.assignee_id" class="avatar" :title="userMap[element.assignee_id]?.username">
                 {{ initials(element.assignee_id) }}

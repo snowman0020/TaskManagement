@@ -2,6 +2,7 @@
 import { ref, watch, onMounted } from 'vue'
 import client from '@/api/client'
 import ImageUploader from '@/components/ImageUploader.vue'
+import DateField from '@/components/DateField.vue'
 import { formatDateTime } from '@/utils/datetime'
 
 const props = defineProps({
@@ -119,6 +120,10 @@ function save() {
         <div class="field">
           <label>Story Points</label>
           <input v-model.number="form.story_points" type="number" min="0" />
+        </div>
+        <div class="field">
+          <label>Expected date</label>
+          <DateField v-model="form.due_date" />
         </div>
       </div>
       <ImageUploader

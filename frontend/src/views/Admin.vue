@@ -1,6 +1,8 @@
 <script setup>
 import { ref, onMounted } from 'vue'
+import draggable from 'vuedraggable'
 import client from '@/api/client'
+import DateField from '@/components/DateField.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
@@ -78,11 +80,22 @@ async function saveColumn(c) {
   colError.value = ''
   try {
     await client.patch(`/api/status-columns/${c.id}`, {
-      name: c.name, order: c.order, wip_limit: c.wip_limit, is_done: c.is_done,
+      key: c.key, name: c.name, order: c.order, wip_limit: c.wip_limit, is_done: c.is_done,
     })
   } catch (e) {
     colError.value = e.response?.data?.detail || 'Failed'
   } finally {
+    await loadColumns()
+  }
+}
+async function persistColumnOrder() {
+  colError.value = ''
+  const items = columns.value.map((c, i) => ({ id: c.id, order: i }))
+  try {
+    await client.patch('/api/status-columns/reorder', { items })
+    columns.value.forEach((c, i) => (c.order = i))
+  } catch (e) {
+    colError.value = e.response?.data?.detail || 'Failed'
     await loadColumns()
   }
 }
@@ -251,20 +264,29 @@ onMounted(() => {
 
     <div class="card">
       <table>
-        <thead><tr><th>Key</th><th>Name</th><th>Order</th><th>WIP Limit</th><th>Is Done</th><th></th></tr></thead>
-        <tbody>
-          <tr v-for="c in columns" :key="c.id">
-            <td><code>{{ c.key }}</code></td>
-            <td><input v-model="c.name" /></td>
-            <td><input v-model.number="c.order" type="number" style="width:70px" /></td>
-            <td><input v-model.number="c.wip_limit" type="number" style="width:80px" /></td>
-            <td><input type="checkbox" v-model="c.is_done" style="width:auto" /></td>
-            <td style="display:flex;gap:6px">
-              <button @click="saveColumn(c)">Save</button>
-              <button class="danger" @click="deleteColumn(c)">Del</button>
-            </td>
-          </tr>
-        </tbody>
+        <thead><tr><th></th><th>Key</th><th>Name</th><th>WIP Limit</th><th>Is Done</th><th></th></tr></thead>
+        <draggable
+          tag="tbody"
+          :list="columns"
+          item-key="id"
+          handle=".drag-handle"
+          :animation="150"
+          @end="persistColumnOrder"
+        >
+          <template #item="{ element: c }">
+            <tr>
+              <td class="drag-handle" style="cursor:grab;width:28px;text-align:center" title="Drag to reorder">⠿</td>
+              <td><input v-model="c.key" style="width:130px" /></td>
+              <td><input v-model="c.name" /></td>
+              <td><input v-model.number="c.wip_limit" type="number" style="width:80px" /></td>
+              <td><input type="checkbox" v-model="c.is_done" style="width:auto" /></td>
+              <td style="display:flex;gap:6px">
+                <button @click="saveColumn(c)">Save</button>
+                <button class="danger" @click="deleteColumn(c)">Del</button>
+              </td>
+            </tr>
+          </template>
+        </draggable>
       </table>
     </div>
   </div>
@@ -276,7 +298,7 @@ onMounted(() => {
       <div class="row">
         <div>
           <label>Start date (snaps to Monday)</label>
-          <input v-model="gen.start_date" type="date" />
+          <DateField v-model="gen.start_date" />
         </div>
         <div>
           <label>Sprint count</label>

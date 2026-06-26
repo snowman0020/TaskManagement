@@ -37,7 +37,17 @@ class StatusColumnCreate(BaseModel):
 
 
 class StatusColumnUpdate(BaseModel):
+    key: str | None = Field(default=None, min_length=1, max_length=40)
     name: str | None = None
     order: int | None = None
     wip_limit: int | None = None
     is_done: bool | None = None
+
+
+class StatusColumnReorderItem(BaseModel):
+    id: str
+    order: int
+
+
+class StatusColumnReorder(BaseModel):
+    items: list[StatusColumnReorderItem]

@@ -3,7 +3,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.core.deps import get_current_user, require_manager
 from app.database import get_db
 from app.schemas.common import oid, serialize, serialize_list
-from app.schemas.sprint import StatusColumnCreate, StatusColumnUpdate
+from app.schemas.sprint import (
+    StatusColumnCreate,
+    StatusColumnReorder,
+    StatusColumnUpdate,
+)
 
 router = APIRouter(prefix="/api/status-columns", tags=["status-columns"])
 
@@ -25,16 +29,43 @@ async def create_column(payload: StatusColumnCreate, _=Depends(require_manager))
     return serialize(doc)
 
 
+# Defined before "/{column_id}" so the literal path isn't captured as an id.
+@router.patch("/reorder")
+async def reorder_columns(payload: StatusColumnReorder, _=Depends(require_manager)):
+    """Persist a new column order after a drag-and-drop in Admin."""
+    db = get_db()
+    for item in payload.items:
+        await db.status_columns.update_one(
+            {"_id": oid(item.id)}, {"$set": {"order": item.order}}
+        )
+    return {"updated": len(payload.items)}
+
+
 @router.patch("/{column_id}")
 async def update_column(column_id: str, payload: StatusColumnUpdate, _=Depends(require_manager)):
+    db = get_db()
+    col = await db.status_columns.find_one({"_id": oid(column_id)})
+    if not col:
+        raise HTTPException(status_code=404, detail="Column not found")
+
     data = payload.model_dump(exclude_unset=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nothing to update")
-    res = await get_db().status_columns.find_one_and_update(
+
+    old_key = col["key"]
+    new_key = data.get("key")
+    key_changed = bool(new_key) and new_key != old_key
+    if key_changed and await db.status_columns.find_one({"key": new_key}):
+        raise HTTPException(status_code=409, detail="Column key already exists")
+
+    res = await db.status_columns.find_one_and_update(
         {"_id": oid(column_id)}, {"$set": data}, return_document=True
     )
-    if not res:
-        raise HTTPException(status_code=404, detail="Column not found")
+    # cascade the rename so tasks on the old status follow to the new key
+    if key_changed:
+        await db.tasks.update_many(
+            {"status": old_key}, {"$set": {"status": new_key}}
+        )
     return serialize(res)
 
 
