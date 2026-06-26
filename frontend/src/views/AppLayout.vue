@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import ThemeToggle from '@/components/ThemeToggle.vue'
@@ -7,9 +7,6 @@ import ThemeToggle from '@/components/ThemeToggle.vue'
 const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
-
-// refresh cached role/profile so admin-side role changes take effect without re-login
-onMounted(() => auth.refresh())
 
 const SIDEBAR_KEY = 'sidebarOpen'
 
@@ -56,6 +53,32 @@ watch(
     if (isMobile()) sidebarOpen.value = false
   }
 )
+
+// Reset the sidebar correctly when crossing the mobile breakpoint, so a desktop
+// "open" state doesn't render as an open drawer covering the content on resize.
+let mql = null
+function onBreakpoint(e) {
+  sidebarOpen.value = e.matches ? false : savedOpen()
+}
+
+onMounted(() => {
+  // refresh cached role/profile so admin-side role changes take effect without re-login
+  auth.refresh()
+  try {
+    mql = window.matchMedia('(max-width: 768px)')
+    mql.addEventListener('change', onBreakpoint)
+  } catch {
+    /* matchMedia unavailable — skip the breakpoint listener */
+  }
+})
+
+onUnmounted(() => {
+  try {
+    mql?.removeEventListener('change', onBreakpoint)
+  } catch {
+    /* ignore */
+  }
+})
 
 function logout() {
   auth.logout()

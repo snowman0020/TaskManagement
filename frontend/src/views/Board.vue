@@ -12,7 +12,8 @@ const columns = ref([])
 const board = ref({}) // { statusKey: [tasks] }
 const users = ref([])
 const sprints = ref([])
-const selectedSprint = ref('')
+// view: 'active' (active sprint) | 'backlog' | 'all' | a specific sprint id
+const view = ref('all')
 const selectedAssignee = ref('') // '' = all, 'none' = unassigned, otherwise a user id
 const loading = ref(true)
 const modalOpen = ref(false)
@@ -22,15 +23,44 @@ const userMap = computed(() =>
   Object.fromEntries(users.value.map((u) => [u.id, u]))
 )
 
+const activeSprint = computed(() => sprints.value.find((s) => s.status === 'active'))
+const noActiveSprint = computed(() => view.value === 'active' && !activeSprint.value)
+
+// the "jump to a specific sprint" dropdown: blank while in a toggle mode
+const sprintSelect = computed({
+  get: () => (['active', 'backlog', 'all'].includes(view.value) ? '' : view.value),
+  set: (v) => {
+    if (v) setView(v)
+  },
+})
+
+// the sprint a new task should default into, given the current view
+function currentSprintId() {
+  if (view.value === 'active') return activeSprint.value?.id || null
+  if (view.value === 'backlog' || view.value === 'all') return null
+  return view.value
+}
+
 // other users for the filter row (the current user gets a dedicated "Me" chip)
 const otherUsers = computed(() =>
   users.value.filter((u) => u.id !== auth.user?.id)
 )
 
 async function loadBoard() {
+  // "Active Sprint" view with no active sprint: show empty columns + a hint,
+  // reusing the already-loaded columns rather than fetching every task.
+  if (noActiveSprint.value) {
+    const grouped = {}
+    for (const c of columns.value) grouped[c.key] = []
+    board.value = grouped
+    loading.value = false
+    return
+  }
   loading.value = true
   const params = {}
-  if (selectedSprint.value) params.sprint_id = selectedSprint.value
+  if (view.value === 'backlog') params.sprint_id = 'none'
+  else if (view.value === 'active') params.sprint_id = activeSprint.value.id
+  else if (view.value !== 'all') params.sprint_id = view.value
   if (selectedAssignee.value) params.assignee_id = selectedAssignee.value
   const { data } = await client.get('/api/tasks/board', { params })
   columns.value = data.columns
@@ -39,6 +69,11 @@ async function loadBoard() {
   for (const c of data.columns) grouped[c.key] = data.tasks[c.key] || []
   board.value = grouped
   loading.value = false
+}
+
+function setView(v) {
+  view.value = v
+  loadBoard()
 }
 
 async function loadMeta() {
@@ -52,6 +87,8 @@ async function loadMeta() {
 
 onMounted(async () => {
   await loadMeta()
+  // default to the active sprint when there is one, otherwise show everything
+  view.value = activeSprint.value ? 'active' : 'all'
   await loadBoard()
 })
 
@@ -104,7 +141,8 @@ async function saveTask(payload, pendingFiles = []) {
   if (payload.id) {
     await client.patch(`/api/tasks/${payload.id}`, payload)
   } else {
-    if (selectedSprint.value && !payload.sprint_id) payload.sprint_id = selectedSprint.value
+    const sid = currentSprintId()
+    if (sid && !payload.sprint_id) payload.sprint_id = sid
     const { data } = await client.post('/api/tasks', payload)
     taskId = data.id
   }
@@ -143,9 +181,18 @@ function setAssignee(val) {
 <template>
   <div class="page-head">
     <h1>Board</h1>
-    <div style="display:flex;gap:10px;align-items:center">
-      <select v-model="selectedSprint" style="width:200px" @change="loadBoard">
-        <option value="">All sprints / Backlog</option>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <div class="segmented">
+        <button class="seg-btn" :class="{ active: view === 'active' }" @click="setView('active')">
+          Active Sprint
+        </button>
+        <button class="seg-btn" :class="{ active: view === 'backlog' }" @click="setView('backlog')">
+          Backlog
+        </button>
+        <button class="seg-btn" :class="{ active: view === 'all' }" @click="setView('all')">All</button>
+      </div>
+      <select v-model="sprintSelect" style="width:170px">
+        <option value="">Jump to sprint…</option>
         <option v-for="s in sprints" :key="s.id" :value="s.id">{{ s.name }}</option>
       </select>
       <button v-if="canEdit" @click="openNew">+ New Task</button>
@@ -178,6 +225,9 @@ function setAssignee(val) {
   </div>
 
   <div v-if="loading">Loading…</div>
+  <div v-else-if="noActiveSprint" class="empty-hint">
+    No active sprint. Set a sprint’s status to “active” in Admin, or choose Backlog / All.
+  </div>
   <div v-else class="board">
     <div v-for="col in columns" :key="col.key" class="column">
       <div class="column-head">

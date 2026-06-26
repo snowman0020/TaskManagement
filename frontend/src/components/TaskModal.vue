@@ -1,5 +1,6 @@
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, onMounted } from 'vue'
+import client from '@/api/client'
 import ImageUploader from '@/components/ImageUploader.vue'
 
 const props = defineProps({
@@ -12,6 +13,30 @@ const emit = defineEmits(['close', 'save', 'delete', 'images-changed'])
 
 const form = ref({})
 const pendingFiles = ref([])
+const history = ref([])
+
+async function loadHistory() {
+  if (!props.task?.id) {
+    history.value = []
+    return
+  }
+  try {
+    const { data } = await client.get(`/api/tasks/${props.task.id}/history`)
+    history.value = data
+  } catch {
+    history.value = []
+  }
+}
+
+function statusName(key) {
+  return props.columns.find((c) => c.key === key)?.name || key
+}
+
+function fmtTime(iso) {
+  return iso ? new Date(iso).toLocaleString() : ''
+}
+
+onMounted(loadHistory)
 
 watch(
   () => props.task,
@@ -100,6 +125,20 @@ function save() {
         @update:pending="pendingFiles = $event"
         @changed="emit('images-changed')"
       />
+      <div v-if="!isNew()" class="field">
+        <label>Move history</label>
+        <div v-if="history.length" class="history">
+          <div v-for="(h, i) in history" :key="i" class="history-row">
+            <span class="who">{{ h.username }}</span>
+            moved
+            <span class="badge">{{ statusName(h.from_status) }}</span>
+            →
+            <span class="badge">{{ statusName(h.to_status) }}</span>
+            <span class="when">{{ fmtTime(h.at) }}</span>
+          </div>
+        </div>
+        <p v-else class="hint">No moves yet.</p>
+      </div>
       <div class="modal-actions">
         <button v-if="!isNew()" class="danger" @click="emit('delete', task)">Delete</button>
         <button class="ghost" @click="emit('close')">Cancel</button>
@@ -108,3 +147,26 @@ function save() {
     </div>
   </div>
 </template>
+
+<style scoped>
+.history {
+  max-height: 140px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  background: var(--input-bg);
+}
+.history-row {
+  font-size: 13px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 3px 0;
+}
+.history-row .who { font-weight: 600; }
+.history-row .when { color: var(--muted); margin-left: auto; font-size: 12px; }
+.hint { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
+</style>

@@ -32,6 +32,28 @@ def _ensure_valid_status(status: str, valid: set[str]) -> None:
         raise HTTPException(status_code=400, detail=f"Unknown status: {status}")
 
 
+async def _log_move(task: dict, from_status: str, to_status: str, user: dict) -> None:
+    """Record a task status change in the activity log (best-effort)."""
+    if from_status == to_status:
+        return
+    try:
+        await get_db().activity_log.insert_one(
+            {
+                "task_id": str(task["_id"]),
+                "task_number": task.get("task_number"),
+                "action": "move",
+                "user_id": str(user["_id"]),
+                "username": user.get("username"),
+                "from_status": from_status,
+                "to_status": to_status,
+                "at": _now(),
+            }
+        )
+    except Exception:
+        # auditing must never fail the move itself
+        pass
+
+
 @router.get("")
 async def list_tasks(
     status: str | None = None,
@@ -61,12 +83,14 @@ async def board(
     """Return columns + tasks grouped by status, ready for the Kanban board.
 
     `assignee_id` filters to one person's tasks; the sentinel "none" returns
-    tasks with no assignee.
+    tasks with no assignee. `sprint_id="none"` returns Backlog (no sprint).
     """
     db = get_db()
     cols = await db.status_columns.find().sort("order", 1).to_list(100)
     query: dict = {}
-    if sprint_id:
+    if sprint_id == "none":
+        query["sprint_id"] = None  # Backlog — matches null or missing
+    elif sprint_id:
         query["sprint_id"] = sprint_id
     if assignee_id == "none":
         query["assignee_id"] = None  # matches null or missing
@@ -152,7 +176,7 @@ async def _apply_status_timestamps(task: dict, new_status: str, update: dict) ->
 
 
 @router.patch("/{task_id}")
-async def update_task(task_id: str, payload: TaskUpdate, _=Depends(require_member)):
+async def update_task(task_id: str, payload: TaskUpdate, current=Depends(require_member)):
     db = get_db()
     task = await db.tasks.find_one({"_id": oid(task_id)})
     if not task:
@@ -160,7 +184,8 @@ async def update_task(task_id: str, payload: TaskUpdate, _=Depends(require_membe
 
     data = payload.model_dump(exclude_unset=True)
     update = {k: v for k, v in data.items()}
-    if "status" in update and update["status"] != task.get("status"):
+    status_changed = "status" in data and data["status"] != task.get("status")
+    if status_changed:
         _, _done, valid = await _status_context()
         _ensure_valid_status(update["status"], valid)
         await _apply_status_timestamps(task, update["status"], update)
@@ -169,11 +194,13 @@ async def update_task(task_id: str, payload: TaskUpdate, _=Depends(require_membe
     res = await db.tasks.find_one_and_update(
         {"_id": oid(task_id)}, {"$set": update}, return_document=True
     )
+    if status_changed:
+        await _log_move(task, task.get("status"), data["status"], current)
     return serialize(res)
 
 
 @router.patch("/{task_id}/move")
-async def move_task(task_id: str, payload: TaskMove, _=Depends(require_member)):
+async def move_task(task_id: str, payload: TaskMove, current=Depends(require_member)):
     """Drag-and-drop: change a task's status column and ordering position."""
     db = get_db()
     task = await db.tasks.find_one({"_id": oid(task_id)})
@@ -190,11 +217,13 @@ async def move_task(task_id: str, payload: TaskMove, _=Depends(require_member)):
     res = await db.tasks.find_one_and_update(
         {"_id": oid(task_id)}, {"$set": update}, return_document=True
     )
+    if payload.status != task.get("status"):
+        await _log_move(task, task.get("status"), payload.status, current)
     return serialize(res)
 
 
 @router.patch("/reorder/bulk")
-async def reorder_tasks(payload: TaskReorder, _=Depends(require_member)):
+async def reorder_tasks(payload: TaskReorder, current=Depends(require_member)):
     """Persist a batch of order/status changes after a drag-and-drop drop."""
     db = get_db()
     _, _done, valid = await _status_context()
@@ -209,10 +238,20 @@ async def reorder_tasks(payload: TaskReorder, _=Depends(require_member)):
             "order": item.order,
             "updated_at": _now(),
         }
-        if item.status != task.get("status"):
+        moved = item.status != task.get("status")
+        if moved:
             await _apply_status_timestamps(task, item.status, update)
         await db.tasks.update_one({"_id": oid(item.id)}, {"$set": update})
+        if moved:
+            await _log_move(task, task.get("status"), item.status, current)
     return {"updated": len(payload.items)}
+
+
+@router.get("/{task_id}/history")
+async def task_history(task_id: str, _=Depends(get_current_user)):
+    """Return a task's move history (status changes), newest first."""
+    docs = await get_db().activity_log.find({"task_id": task_id}).sort("at", -1).to_list(500)
+    return serialize_list(docs)
 
 
 @router.delete("/{task_id}", status_code=204)
