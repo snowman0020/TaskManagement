@@ -64,6 +64,25 @@ docker compose up --build
 - Backend API + docs: http://localhost:8000/docs
 - Default admin: **admin / admin1234** (change in production!)
 
+## One-click helper scripts
+
+Convenience scripts are provided for both Windows (PowerShell) and macOS/Linux (bash).
+They auto-select **Python 3.12** (avoiding the Python 3.14 `pydantic-core` build error)
+and call the venv's Python directly, so you never hit a PowerShell execution-policy prompt.
+
+| Goal | Windows (PowerShell) | macOS / Linux |
+|------|----------------------|---------------|
+| Everything (Mongo + backend + frontend) | `.\dev.ps1` | `./dev.sh` |
+| Backend only: setup venv + install + run | `cd backend; .\dev.ps1` | `cd backend && ./dev.sh` |
+| Backend: quick start (after setup) | `cd backend; .\start.ps1` | `cd backend && ./dev.sh` |
+| Backend tests (no MongoDB needed) | `cd backend; .\test.ps1` | `cd backend && ./test.sh` |
+| Frontend only | `cd frontend; .\dev.ps1` | `cd frontend && ./dev.sh` |
+
+The root `dev.ps1` / `dev.sh` starts a MongoDB container (if Docker is available),
+then launches the backend (`:8000`) and frontend (`:5173`). Log in with **admin / admin1234**.
+
+> Prefer zero local setup? `docker compose up --build` runs the whole stack in containers.
+
 ## Local development
 
 ### Backend
