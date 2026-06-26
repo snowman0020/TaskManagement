@@ -1,9 +1,13 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
+import draggable from 'vuedraggable'
 import client from '@/api/client'
+import DateField from '@/components/DateField.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useBoardStore } from '@/stores/board'
 
 const auth = useAuthStore()
+const board = useBoardStore()
 const tab = ref('users')
 
 /* ---------- Users ---------- */
@@ -62,12 +66,12 @@ const newCol = ref({ key: '', name: '', order: 0, wip_limit: null, is_done: fals
 const colError = ref('')
 
 async function loadColumns() {
-  columns.value = (await client.get('/api/status-columns')).data
+  columns.value = (await client.get('/api/status-columns', { params: { board_id: board.activeId } })).data
 }
 async function createColumn() {
   colError.value = ''
   try {
-    await client.post('/api/status-columns', newCol.value)
+    await client.post('/api/status-columns', { ...newCol.value, board_id: board.activeId })
     newCol.value = { key: '', name: '', order: columns.value.length, wip_limit: null, is_done: false }
     await loadColumns()
   } catch (e) {
@@ -78,11 +82,22 @@ async function saveColumn(c) {
   colError.value = ''
   try {
     await client.patch(`/api/status-columns/${c.id}`, {
-      name: c.name, order: c.order, wip_limit: c.wip_limit, is_done: c.is_done,
+      key: c.key, name: c.name, order: c.order, wip_limit: c.wip_limit, is_done: c.is_done,
     })
   } catch (e) {
     colError.value = e.response?.data?.detail || 'Failed'
   } finally {
+    await loadColumns()
+  }
+}
+async function persistColumnOrder() {
+  colError.value = ''
+  const items = columns.value.map((c, i) => ({ id: c.id, order: i }))
+  try {
+    await client.patch('/api/status-columns/reorder', { items })
+    columns.value.forEach((c, i) => (c.order = i))
+  } catch (e) {
+    colError.value = e.response?.data?.detail || 'Failed'
     await loadColumns()
   }
 }
@@ -107,12 +122,12 @@ function normManday(v) {
 }
 
 async function loadSprints() {
-  sprints.value = (await client.get('/api/sprints')).data
+  sprints.value = (await client.get('/api/sprints', { params: { board_id: board.activeId } })).data
 }
 async function generateSprints() {
   sprintError.value = ''
   try {
-    const payload = { ...gen.value, manday: normManday(gen.value.manday) }
+    const payload = { ...gen.value, manday: normManday(gen.value.manday), board_id: board.activeId }
     const { data } = await client.post('/api/sprints/generate', payload)
     if (data.created === 0) sprintError.value = 'No new sprints created (names already exist).'
   } catch (e) {
@@ -125,6 +140,23 @@ async function saveManday(s) {
   sprintError.value = ''
   try {
     await client.patch(`/api/sprints/${s.id}`, { manday: normManday(s.manday) })
+  } catch (e) {
+    sprintError.value = e.response?.data?.detail || 'Failed'
+  } finally {
+    await loadSprints()
+  }
+}
+async function completeSprint(s) {
+  if (
+    !confirm(
+      `Complete "${s.name}"? This permanently deletes its done tasks and cannot be undone.`
+    )
+  )
+    return
+  sprintError.value = ''
+  try {
+    const { data } = await client.post(`/api/sprints/${s.id}/complete`)
+    alert(`Completed "${s.name}". Deleted ${data.deleted} done task(s).`)
   } catch (e) {
     sprintError.value = e.response?.data?.detail || 'Failed'
   } finally {
@@ -156,8 +188,60 @@ function fmt(d) {
   return d ? new Date(d).toISOString().slice(0, 10) : ''
 }
 
-onMounted(() => {
-  loadUsers(); loadColumns(); loadSprints()
+/* ---------- Boards ---------- */
+const boards = ref([])
+const newBoard = ref({ name: '', prefix: 'TASK', start_number: 1, member_ids: [] })
+const boardError = ref('')
+
+async function loadBoards() {
+  boards.value = (await client.get('/api/boards')).data
+}
+async function createBoard() {
+  boardError.value = ''
+  try {
+    await client.post('/api/boards', newBoard.value)
+    newBoard.value = { name: '', prefix: 'TASK', start_number: 1, member_ids: [] }
+    await loadBoards()
+    await board.reload() // refresh the top-bar switcher
+  } catch (e) {
+    boardError.value = e.response?.data?.detail || 'Failed'
+  }
+}
+async function saveBoardMembers(b) {
+  boardError.value = ''
+  try {
+    await client.patch(`/api/boards/${b.id}`, { member_ids: b.member_ids })
+  } catch (e) {
+    boardError.value = e.response?.data?.detail || 'Failed'
+  } finally {
+    await loadBoards()
+  }
+}
+async function deleteBoard(b) {
+  if (!confirm(`Delete board "${b.name}" and all its tasks/sprints/columns? Cannot be undone.`)) return
+  boardError.value = ''
+  try {
+    await client.delete(`/api/boards/${b.id}`)
+    await loadBoards()
+    await board.reload()
+  } catch (e) {
+    boardError.value = e.response?.data?.detail || 'Failed'
+  }
+}
+function toggleMember(list, userId) {
+  const i = list.indexOf(userId)
+  if (i >= 0) list.splice(i, 1)
+  else list.push(userId)
+}
+
+onMounted(async () => {
+  await board.load()
+  loadUsers(); loadColumns(); loadSprints(); loadBoards()
+})
+
+// columns and sprints are per board — reload them when the active board changes
+watch(() => board.activeId, () => {
+  loadColumns(); loadSprints()
 })
 </script>
 
@@ -168,6 +252,7 @@ onMounted(() => {
     <div class="tab" :class="{ active: tab === 'users' }" @click="tab = 'users'">Users &amp; Roles</div>
     <div class="tab" :class="{ active: tab === 'columns' }" @click="tab = 'columns'">Status Columns</div>
     <div class="tab" :class="{ active: tab === 'sprints' }" @click="tab = 'sprints'">Sprints</div>
+    <div v-if="auth.isAdmin" class="tab" :class="{ active: tab === 'boards' }" @click="tab = 'boards'">Boards</div>
   </div>
 
   <!-- USERS -->
@@ -234,20 +319,29 @@ onMounted(() => {
 
     <div class="card">
       <table>
-        <thead><tr><th>Key</th><th>Name</th><th>Order</th><th>WIP Limit</th><th>Is Done</th><th></th></tr></thead>
-        <tbody>
-          <tr v-for="c in columns" :key="c.id">
-            <td><code>{{ c.key }}</code></td>
-            <td><input v-model="c.name" /></td>
-            <td><input v-model.number="c.order" type="number" style="width:70px" /></td>
-            <td><input v-model.number="c.wip_limit" type="number" style="width:80px" /></td>
-            <td><input type="checkbox" v-model="c.is_done" style="width:auto" /></td>
-            <td style="display:flex;gap:6px">
-              <button @click="saveColumn(c)">Save</button>
-              <button class="danger" @click="deleteColumn(c)">Del</button>
-            </td>
-          </tr>
-        </tbody>
+        <thead><tr><th></th><th>Key</th><th>Name</th><th>WIP Limit</th><th>Is Done</th><th></th></tr></thead>
+        <draggable
+          tag="tbody"
+          :list="columns"
+          item-key="id"
+          handle=".drag-handle"
+          :animation="150"
+          @end="persistColumnOrder"
+        >
+          <template #item="{ element: c }">
+            <tr>
+              <td class="drag-handle" style="cursor:grab;width:28px;text-align:center" title="Drag to reorder">⠿</td>
+              <td><input v-model="c.key" style="width:130px" /></td>
+              <td><input v-model="c.name" /></td>
+              <td><input v-model.number="c.wip_limit" type="number" style="width:80px" /></td>
+              <td><input type="checkbox" v-model="c.is_done" style="width:auto" /></td>
+              <td style="display:flex;gap:6px">
+                <button @click="saveColumn(c)">Save</button>
+                <button class="danger" @click="deleteColumn(c)">Del</button>
+              </td>
+            </tr>
+          </template>
+        </draggable>
       </table>
     </div>
   </div>
@@ -259,7 +353,7 @@ onMounted(() => {
       <div class="row">
         <div>
           <label>Start date (snaps to Monday)</label>
-          <input v-model="gen.start_date" type="date" />
+          <DateField v-model="gen.start_date" />
         </div>
         <div>
           <label>Sprint count</label>
@@ -304,7 +398,89 @@ onMounted(() => {
                 <option value="completed">completed</option>
               </select>
             </td>
-            <td><button class="danger" @click="deleteSprint(s)">Delete</button></td>
+            <td style="display:flex;gap:6px">
+              <button class="ghost" @click="completeSprint(s)">Complete</button>
+              <button class="danger" @click="deleteSprint(s)">Delete</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- BOARDS -->
+  <div v-if="tab === 'boards' && auth.isAdmin">
+    <div class="card" style="margin-bottom:16px">
+      <h3 style="margin-top:0">Create Board</h3>
+      <div class="row">
+        <div>
+          <label>Name</label>
+          <input v-model="newBoard.name" placeholder="e.g. Mobile App" />
+        </div>
+        <div>
+          <label>Task prefix</label>
+          <input v-model="newBoard.prefix" placeholder="TASK" />
+        </div>
+        <div>
+          <label>Start number</label>
+          <input v-model.number="newBoard.start_number" type="number" min="1" />
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <button @click="createBoard" :disabled="!newBoard.name || !newBoard.prefix">Create</button>
+        </div>
+      </div>
+      <div style="margin-top:10px">
+        <label>Members</label>
+        <div style="display:flex;flex-wrap:wrap;gap:10px">
+          <label
+            v-for="u in users"
+            :key="u.id"
+            style="display:flex;align-items:center;gap:4px;margin:0;font-size:13px"
+          >
+            <input
+              type="checkbox"
+              style="width:auto"
+              :checked="newBoard.member_ids.includes(u.id)"
+              @change="toggleMember(newBoard.member_ids, u.id)"
+            />
+            {{ u.full_name || u.username }}
+          </label>
+        </div>
+      </div>
+      <p v-if="boardError" class="error">{{ boardError }}</p>
+    </div>
+
+    <div class="card">
+      <table>
+        <thead><tr><th>Name</th><th>Prefix</th><th>Members</th><th></th></tr></thead>
+        <tbody>
+          <tr v-for="b in boards" :key="b.id">
+            <td>
+              {{ b.name }}
+              <span v-if="b.is_default" class="badge" style="margin-left:6px">default</span>
+            </td>
+            <td><code>{{ b.prefix }}</code></td>
+            <td>
+              <div style="display:flex;flex-wrap:wrap;gap:8px">
+                <label
+                  v-for="u in users"
+                  :key="u.id"
+                  style="display:flex;align-items:center;gap:4px;margin:0;font-size:12px"
+                >
+                  <input
+                    type="checkbox"
+                    style="width:auto"
+                    :checked="b.member_ids.includes(u.id)"
+                    @change="toggleMember(b.member_ids, u.id)"
+                  />
+                  {{ u.username }}
+                </label>
+              </div>
+            </td>
+            <td style="display:flex;gap:6px">
+              <button class="ghost" @click="saveBoardMembers(b)">Save</button>
+              <button v-if="!b.is_default" class="danger" @click="deleteBoard(b)">Delete</button>
+            </td>
           </tr>
         </tbody>
       </table>

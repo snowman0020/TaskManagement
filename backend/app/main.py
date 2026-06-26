@@ -7,7 +7,10 @@ from app.config import settings
 from app.database import close_mongo_connection, connect_to_mongo
 from app.routers import (
     auth,
+    boards,
+    comments,
     dashboard,
+    notifications,
     sprints,
     status_columns,
     task_images,
@@ -37,8 +40,11 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(users.router)
+app.include_router(boards.router)
 app.include_router(tasks.router)
 app.include_router(task_images.router)
+app.include_router(comments.router)
+app.include_router(notifications.router)
 app.include_router(sprints.router)
 app.include_router(status_columns.router)
 app.include_router(dashboard.router)

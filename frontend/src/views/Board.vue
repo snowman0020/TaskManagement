@@ -1,11 +1,13 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import draggable from 'vuedraggable'
 import client from '@/api/client'
 import TaskModal from '@/components/TaskModal.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useBoardStore } from '@/stores/board'
 
 const auth = useAuthStore()
+const boardStore = useBoardStore()
 const canEdit = computed(() => auth.canEdit)
 
 const columns = ref([])
@@ -57,7 +59,7 @@ async function loadBoard() {
     return
   }
   loading.value = true
-  const params = {}
+  const params = { board_id: boardStore.activeId }
   if (view.value === 'backlog') params.sprint_id = 'none'
   else if (view.value === 'active') params.sprint_id = activeSprint.value.id
   else if (view.value !== 'all') params.sprint_id = view.value
@@ -79,18 +81,27 @@ function setView(v) {
 async function loadMeta() {
   const [u, s] = await Promise.all([
     client.get('/api/users'),
-    client.get('/api/sprints'),
+    client.get('/api/sprints', { params: { board_id: boardStore.activeId } }),
   ])
   users.value = u.data
   sprints.value = s.data
 }
 
-onMounted(async () => {
+async function reloadForBoard() {
   await loadMeta()
   // default to the active sprint when there is one, otherwise show everything
   view.value = activeSprint.value ? 'active' : 'all'
+  selectedAssignee.value = ''
   await loadBoard()
+}
+
+onMounted(async () => {
+  await boardStore.load()
+  await reloadForBoard()
 })
+
+// reload everything when the active board changes
+watch(() => boardStore.activeId, reloadForBoard)
 
 function initials(id) {
   const u = userMap.value[id]
@@ -143,6 +154,7 @@ async function saveTask(payload, pendingFiles = []) {
   } else {
     const sid = currentSprintId()
     if (sid && !payload.sprint_id) payload.sprint_id = sid
+    payload.board_id = boardStore.activeId
     const { data } = await client.post('/api/tasks', payload)
     taskId = data.id
   }
@@ -254,6 +266,7 @@ function setAssignee(val) {
               <span class="badge" :class="element.priority">{{ element.priority }}</span>
               <span v-if="element.story_points" class="badge">{{ element.story_points }} pts</span>
               <span v-if="element.images?.length" class="badge">📎 {{ element.images.length }}</span>
+              <span v-if="element.due_date" class="badge">📅 {{ String(element.due_date).slice(0, 10) }}</span>
               <span style="flex:1"></span>
               <span v-if="element.assignee_id" class="avatar" :title="userMap[element.assignee_id]?.username">
                 {{ initials(element.assignee_id) }}

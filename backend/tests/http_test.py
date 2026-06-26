@@ -170,6 +170,39 @@ async def main():
         assert len((await c.get(f"/api/tasks/{t1['id']}/history", headers=h)).json()) == 2
         print("✓ task move history: status changes logged newest-first, same-column reorder ignored")
 
+        # complete sprint: deletes only THIS sprint's done tasks, marks it completed
+        csp = (await c.post("/api/sprints", json={"name": "Done Sprint", "start_date": "2026-12-07"}, headers=h)).json()
+        csid = csp["id"]
+        done_in = (await c.post("/api/tasks", json={"title": "done in sprint", "status": "Done", "sprint_id": csid}, headers=h)).json()
+        todo_in = (await c.post("/api/tasks", json={"title": "todo in sprint", "sprint_id": csid}, headers=h)).json()
+        done_backlog = (await c.post("/api/tasks", json={"title": "done backlog", "status": "Done"}, headers=h)).json()
+        comp = (await c.post(f"/api/sprints/{csid}/complete", headers=h)).json()
+        assert comp["deleted"] == 1, comp
+        assert comp["sprint"]["status"] == "completed", comp
+        assert (await c.get(f"/api/tasks/{done_in['id']}", headers=h)).status_code == 404
+        assert (await c.get(f"/api/tasks/{todo_in['id']}", headers=h)).status_code == 200
+        assert (await c.get(f"/api/tasks/{done_backlog['id']}", headers=h)).status_code == 200
+        print("✓ complete sprint: deletes only the sprint's done tasks, marks it completed")
+
+        # status columns: drag-reorder persists, then restore original order
+        cols = (await c.get("/api/status-columns", headers=h)).json()
+        n = len(cols)
+        rev = [{"id": col["id"], "order": n - 1 - i} for i, col in enumerate(cols)]
+        assert (await c.patch("/api/status-columns/reorder", json={"items": rev}, headers=h)).json()["updated"] == n
+        cols2 = (await c.get("/api/status-columns", headers=h)).json()
+        assert [col["key"] for col in cols2] == [col["key"] for col in reversed(cols)]
+        await c.patch("/api/status-columns/reorder",
+                      json={"items": [{"id": col["id"], "order": i} for i, col in enumerate(cols)]}, headers=h)
+        print("✓ status columns reorder persists new order")
+
+        # edit a column key — tasks on it cascade to the new key; dup key rejected
+        newcol = (await c.post("/api/status-columns", json={"key": "Review", "name": "Review", "order": 99}, headers=h)).json()
+        rtask = (await c.post("/api/tasks", json={"title": "in review", "status": "Review"}, headers=h)).json()
+        assert (await c.patch(f"/api/status-columns/{newcol['id']}", json={"key": "CodeReview"}, headers=h)).status_code == 200
+        assert (await c.get(f"/api/tasks/{rtask['id']}", headers=h)).json()["status"] == "CodeReview"
+        assert (await c.patch(f"/api/status-columns/{newcol['id']}", json={"key": "Done"}, headers=h)).status_code == 409
+        print("✓ status column key edit cascades to tasks; duplicate key rejected")
+
         # role enforcement: member created, member cannot create users
         await c.post("/api/users", json={
             "username": "member1", "email": "m@e.com", "password": "secret1", "role": "member",
@@ -196,6 +229,87 @@ async def main():
                               json={"status": "QA", "order": 0}, headers=vh)).status_code == 403
         assert (await c.delete(f"/api/tasks/{t1['id']}", headers=vh)).status_code == 403
         print("✓ RBAC: viewer can read board but blocked (403) from create/move/delete")
+
+        # task comments + one-level replies
+        cm = (await c.post(f"/api/tasks/{t1['id']}/comments", json={"body": "first comment"}, headers=h)).json()
+        rp = (await c.post(f"/api/tasks/{t1['id']}/comments", json={"body": "a reply", "parent_id": cm["id"]}, headers=h)).json()
+        nested = (await c.get(f"/api/tasks/{t1['id']}/comments", headers=h)).json()
+        assert len(nested) == 1 and nested[0]["id"] == cm["id"]
+        assert len(nested[0]["replies"]) == 1 and nested[0]["replies"][0]["body"] == "a reply"
+        # reply-to-reply rejected
+        assert (await c.post(f"/api/tasks/{t1['id']}/comments", json={"body": "x", "parent_id": rp["id"]}, headers=h)).status_code == 400
+        # viewer cannot comment
+        assert (await c.post(f"/api/tasks/{t1['id']}/comments", json={"body": "nope"}, headers=vh)).status_code == 403
+        # a member cannot delete someone else's comment; an admin/manager can
+        assert (await c.delete(f"/api/tasks/{t1['id']}/comments/{cm['id']}", headers=mh)).status_code == 403
+        assert (await c.delete(f"/api/tasks/{t1['id']}/comments/{cm['id']}", headers=h)).status_code == 204
+        # deleting the top-level comment removed its reply too
+        assert (await c.get(f"/api/tasks/{t1['id']}/comments", headers=h)).json() == []
+        print("✓ comments: nested replies, reply-to-reply 400, viewer 403, RBAC delete, cascade")
+
+        # notifications: assign + move + sprint complete; actor never notifies self
+        member_me = (await c.get("/api/auth/me", headers=mh)).json()
+        bid = member_me["id"]
+        nt = (await c.post("/api/tasks", json={"title": "assigned to B", "assignee_id": bid}, headers=h)).json()
+        await c.patch(f"/api/tasks/{nt['id']}/move", json={"status": "InProgress", "order": 0}, headers=h)
+        nsp = (await c.post("/api/sprints", json={"name": "Notify Sprint", "start_date": "2027-01-04"}, headers=h)).json()
+        await c.post(f"/api/sprints/{nsp['id']}/complete", headers=h)
+        bn = (await c.get("/api/notifications", headers=mh)).json()
+        btypes = set(n["type"] for n in bn["items"])
+        assert {"assign", "move", "sprint_complete"} <= btypes, bn
+        assert bn["unread"] >= 3, bn
+        an = (await c.get("/api/notifications", headers=h)).json()
+        assert all(n.get("sprint_id") != nsp["id"] for n in an["items"]), "actor was notified of own action"
+        await c.post("/api/notifications/read-all", headers=mh)
+        assert (await c.get("/api/notifications", headers=mh)).json()["unread"] == 0
+        # delete-all clears the list entirely
+        await c.delete("/api/notifications", headers=mh)
+        assert (await c.get("/api/notifications", headers=mh)).json()["items"] == []
+        print("✓ notifications: assign/move/sprint_complete delivered, actor skipped, read-all + delete-all")
+
+        # multi-board: a second board with its own prefix + start number, isolated
+        boards = (await c.get("/api/boards", headers=h)).json()
+        assert any(b.get("is_default") for b in boards), boards
+        nb = (await c.post("/api/boards", json={
+            "name": "Beta", "prefix": "BETA", "start_number": 100, "member_ids": [bid],
+        }, headers=h)).json()
+        nbid = nb["id"]
+        # the new board gets its own seeded columns
+        bcols = (await c.get(f"/api/status-columns?board_id={nbid}", headers=h)).json()
+        assert {col["key"] for col in bcols} == {"TODO", "InProgress", "QA", "Done"}, bcols
+        # a task created in the board starts at the configured number with the prefix
+        bt = (await c.post("/api/tasks", json={"title": "first beta", "board_id": nbid}, headers=h)).json()
+        assert bt["task_number"] == "BETA-100", bt
+        assert bt["board_id"] == nbid
+        # the board view shows only the board's tasks
+        bv = (await c.get(f"/api/tasks/board?board_id={nbid}", headers=h)).json()
+        bv_ids = [t["id"] for col in bv["tasks"].values() for t in col]
+        assert bt["id"] in bv_ids and t1["id"] not in bv_ids
+        # a non-member is denied; a member and admin are allowed
+        assert (await c.get(f"/api/tasks/board?board_id={nbid}", headers=vh)).status_code == 403
+        assert (await c.get(f"/api/tasks/board?board_id={nbid}", headers=mh)).status_code == 200
+        print("✓ multi-board: per-board prefix/start, isolated tasks+columns, membership 403")
+
+        # IDOR: a non-member is denied per-id access to the board's task/comments
+        assert (await c.get(f"/api/tasks/{bt['id']}", headers=vh)).status_code == 403
+        assert (await c.get(f"/api/tasks/{bt['id']}/history", headers=vh)).status_code == 403
+        assert (await c.get(f"/api/tasks/{bt['id']}/comments", headers=vh)).status_code == 403
+        assert (await c.delete(f"/api/tasks/{bt['id']}", headers=vh)).status_code == 403
+        assert (await c.get(f"/api/tasks/{bt['id']}", headers=mh)).status_code == 200  # member ok
+        # second board with the DEFAULT 'TASK' prefix numbers from its own counter
+        gamma = (await c.post("/api/boards", json={"name": "Gamma", "member_ids": [bid]}, headers=h)).json()
+        gt = (await c.post("/api/tasks", json={"title": "g", "board_id": gamma["id"]}, headers=h)).json()
+        assert gt["task_number"] == "TASK-1", gt
+        # a task cannot reference a sprint from another board
+        bsp = (await c.post("/api/sprints", json={"name": "Beta Sprint", "start_date": "2027-02-01", "board_id": nbid}, headers=h)).json()
+        cross = await c.post("/api/tasks", json={"title": "x", "board_id": gamma["id"], "sprint_id": bsp["id"]}, headers=h)
+        assert cross.status_code == 400, cross.status_code
+        # PATCH a column with key:null must not overwrite the real key
+        col0 = (await c.get("/api/status-columns", headers=h)).json()[0]
+        await c.patch(f"/api/status-columns/{col0['id']}", json={"key": None, "name": "Renamed"}, headers=h)
+        col0b = next(x for x in (await c.get("/api/status-columns", headers=h)).json() if x["id"] == col0["id"])
+        assert col0b["key"] == col0["key"], col0b
+        print("✓ hardening: per-id IDOR 403, default-prefix per-board numbering, cross-board sprint 400, key=null ignored")
 
         # admin cannot demote/lock out the last admin
         me = (await c.get("/api/auth/me", headers=h)).json()

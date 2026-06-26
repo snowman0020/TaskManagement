@@ -29,16 +29,36 @@ def get_db() -> AsyncIOMotorDatabase:
 
 async def _ensure_indexes() -> None:
     db = get_db()
+    # Drop obsolete global-unique indexes — task numbers, column keys, and sprint
+    # names are now unique PER BOARD, not globally (pre-multi-board leftovers).
+    for coll, idx in (
+        (db.tasks, "task_number_1"),
+        (db.status_columns, "key_1"),
+        (db.sprints, "name_1"),
+    ):
+        try:
+            await coll.drop_index(idx)
+        except Exception:
+            pass
+
     await db.users.create_index("username", unique=True)
     await db.users.create_index("email", unique=True)
-    await db.tasks.create_index("task_number", unique=True)
+    # per-board uniqueness (storage-level guarantee, not just app-level checks)
+    await db.tasks.create_index([("board_id", 1), ("task_number", 1)], unique=True)
+    await db.status_columns.create_index([("board_id", 1), ("key", 1)], unique=True)
+    await db.sprints.create_index([("board_id", 1), ("name", 1)], unique=True)
     await db.tasks.create_index("status")
     await db.tasks.create_index("sprint_id")
+    await db.tasks.create_index("board_id")
     await db.tasks.create_index([("status", 1), ("order", 1)])
-    await db.sprints.create_index("name", unique=True)
-    await db.status_columns.create_index("key", unique=True)
+    await db.sprints.create_index("board_id")
+    await db.status_columns.create_index("board_id")
     await db.status_columns.create_index("order")
+    await db.boards.create_index("member_ids")
     await db.activity_log.create_index([("task_id", 1), ("at", -1)])
+    await db.comments.create_index([("task_id", 1), ("created_at", 1)])
+    await db.notifications.create_index([("user_id", 1), ("created_at", -1)])
+    await db.notifications.create_index([("user_id", 1), ("read", 1)])
 
 
 async def next_sequence(name: str) -> int:

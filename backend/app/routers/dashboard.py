@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query
 
 from app.core.deps import get_current_user
 from app.database import get_db
+from app.services.access import ensure_board_access, resolve_board_id
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -19,14 +20,17 @@ def _hours_between(a: datetime, b: datetime) -> float:
 @router.get("/overview")
 async def overview(
     sprint_id: str | None = Query(default=None),
-    _=Depends(get_current_user),
+    board_id: str | None = Query(default=None),
+    current=Depends(get_current_user),
 ):
     db = get_db()
-    query: dict = {}
+    board_id = await resolve_board_id(board_id)
+    await ensure_board_access(board_id, current)
+    query: dict = {"board_id": board_id}
     if sprint_id:
         query["sprint_id"] = sprint_id
 
-    cols = await db.status_columns.find().sort("order", 1).to_list(100)
+    cols = await db.status_columns.find({"board_id": board_id}).sort("order", 1).to_list(100)
     done_keys = {c["key"] for c in cols if c.get("is_done")}
     if not done_keys and cols:
         done_keys = {cols[-1]["key"]}

@@ -2,6 +2,9 @@
 import { ref, watch, onMounted } from 'vue'
 import client from '@/api/client'
 import ImageUploader from '@/components/ImageUploader.vue'
+import DateField from '@/components/DateField.vue'
+import TaskComments from '@/components/TaskComments.vue'
+import { formatDateTime } from '@/utils/datetime'
 
 const props = defineProps({
   task: { type: Object, default: null },
@@ -33,7 +36,7 @@ function statusName(key) {
 }
 
 function fmtTime(iso) {
-  return iso ? new Date(iso).toLocaleString() : ''
+  return formatDateTime(iso)
 }
 
 onMounted(loadHistory)
@@ -119,6 +122,10 @@ function save() {
           <label>Story Points</label>
           <input v-model.number="form.story_points" type="number" min="0" />
         </div>
+        <div class="field">
+          <label>Expected date</label>
+          <DateField v-model="form.due_date" />
+        </div>
       </div>
       <ImageUploader
         :task="task"
@@ -139,6 +146,7 @@ function save() {
         </div>
         <p v-else class="hint">No moves yet.</p>
       </div>
+      <TaskComments v-if="!isNew()" :task-id="task.id" />
       <div class="modal-actions">
         <button v-if="!isNew()" class="danger" @click="emit('delete', task)">Delete</button>
         <button class="ghost" @click="emit('close')">Cancel</button>
