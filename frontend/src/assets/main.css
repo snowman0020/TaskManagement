@@ -1,4 +1,6 @@
 :root {
+  /* Let native controls (date picker, scrollbars, calendar popup) render light */
+  color-scheme: light;
   --bg: #f4f5f7;
   --panel: #ffffff;
   --surface: #ffffff;
@@ -34,6 +36,8 @@
 }
 
 [data-theme='dark'] {
+  /* Native date picker, calendar popup & scrollbars follow the dark theme */
+  color-scheme: dark;
   --bg: #0d1117;
   --panel: #161b22;
   --surface: #1c2128;
