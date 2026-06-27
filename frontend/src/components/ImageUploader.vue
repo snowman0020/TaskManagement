@@ -15,6 +15,14 @@ const existing = ref([]) // { id, url, filename } — object URLs from authed bl
 const pending = ref([]) // { file, url, name }
 const error = ref('')
 const dragOver = ref(false)
+const preview = ref(null) // { url, name } of the image shown full-size, or null
+
+function openPreview(url, name) {
+  preview.value = { url, name }
+}
+function closePreview() {
+  preview.value = null
+}
 
 function total() {
   return existing.value.length + pending.value.length
@@ -124,15 +132,22 @@ onUnmounted(revokeAll)
 
     <div v-if="total()" class="thumbs">
       <div v-for="(p, i) in existing" :key="'e-' + p.id" class="thumb" :title="p.filename">
-        <img :src="p.url" :alt="p.filename" />
+        <img :src="p.url" :alt="p.filename" @click="openPreview(p.url, p.filename)" />
         <button type="button" class="thumb-x" title="Remove" @click="removeExisting(i)">×</button>
       </div>
       <div v-for="(p, i) in pending" :key="'p-' + i" class="thumb pending" :title="p.name">
-        <img :src="p.url" :alt="p.name" />
+        <img :src="p.url" :alt="p.name" @click="openPreview(p.url, p.name)" />
         <button type="button" class="thumb-x" title="Remove" @click="removePending(i)">×</button>
         <span class="badge new-badge">new</span>
       </div>
     </div>
+
+    <teleport to="body">
+      <div v-if="preview" class="lightbox" @click="closePreview">
+        <img :src="preview.url" :alt="preview.name" @click.stop />
+        <button type="button" class="lightbox-x" title="Close" @click="closePreview">×</button>
+      </div>
+    </teleport>
   </div>
 </template>
 
@@ -177,6 +192,7 @@ onUnmounted(revokeAll)
   height: 100%;
   object-fit: cover;
   display: block;
+  cursor: zoom-in;
 }
 .thumb-x {
   position: absolute;
@@ -200,5 +216,44 @@ onUnmounted(revokeAll)
   left: 2px;
   background: var(--primary);
   color: var(--on-primary);
+}
+
+/* Full-size image preview (lightbox) */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--backdrop, rgba(0, 0, 0, 0.7));
+  cursor: zoom-out;
+}
+.lightbox img {
+  max-width: 95vw;
+  max-height: 95vh;
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+  cursor: default;
+}
+.lightbox-x {
+  position: absolute;
+  top: 16px;
+  right: 20px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 </style>

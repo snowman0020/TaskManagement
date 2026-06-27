@@ -70,12 +70,17 @@ async def _status_name(key: str, board_id: str) -> str:
 
 
 async def _notify_move(task: dict, new_status: str, assignee: str | None, actor: dict) -> None:
-    """Tell a task's assignee it was moved (the actor never notifies themselves)."""
-    if not assignee:
+    """Tell a task's assignee and its creator it was moved.
+
+    notify() drops empty ids, deduplicates, and skips the actor, so the person
+    doing the move is never notified even if they are the assignee or reporter.
+    """
+    recipients = [assignee, task.get("reporter_id")]
+    if not any(recipients):
         return
     name = await _status_name(new_status, task.get("board_id"))
     await notify(
-        [assignee],
+        recipients,
         "move",
         f"{task.get('task_number')} moved to {name} by {actor.get('username')}",
         actor_id=str(actor["_id"]),
