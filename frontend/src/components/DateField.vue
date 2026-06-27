@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 // A native date picker that normalizes its value: accepts an ISO datetime or a
 // YYYY-MM-DD string, and emits YYYY-MM-DD (or null when cleared).
@@ -7,6 +7,8 @@ const props = defineProps({
   modelValue: { type: [String, null], default: '' },
 })
 const emit = defineEmits(['update:modelValue'])
+
+const el = ref(null)
 
 const dateStr = computed({
   get() {
@@ -18,8 +20,24 @@ const dateStr = computed({
     emit('update:modelValue', v || null)
   },
 })
+
+// Open the native calendar on click anywhere in the field (where supported),
+// so users don't have to hit the tiny indicator icon.
+function openPicker() {
+  try {
+    el.value?.showPicker?.()
+  } catch {
+    /* showPicker throws if not user-activated or unsupported; ignore */
+  }
+}
 </script>
 
 <template>
-  <input type="date" v-model="dateStr" />
+  <input ref="el" type="date" v-model="dateStr" @click="openPicker" />
 </template>
+
+<style scoped>
+input[type='date']::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+}
+</style>

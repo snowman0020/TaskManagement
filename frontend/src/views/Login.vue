@@ -5,7 +5,7 @@ import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
 const router = useRouter()
-const username = ref('admin')
+const username = ref('')
 const password = ref('')
 const error = ref('')
 const loading = ref(false)
@@ -40,9 +40,6 @@ async function submit() {
         {{ loading ? 'Signing in…' : 'Sign in' }}
       </button>
       <p v-if="error" class="error">{{ error }}</p>
-      <p style="color:var(--muted);font-size:12px;text-align:center;margin-bottom:0">
-        Default admin: <code>admin</code> / <code>admin1234</code>
-      </p>
     </form>
   </div>
 </template>
