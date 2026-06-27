@@ -14,6 +14,8 @@ const tab = ref('users')
 const users = ref([])
 const newUser = ref({ username: '', email: '', password: '', full_name: '', role: 'member' })
 const userError = ref('')
+const editingId = ref(null) // id of the user being edited inline, or null
+const editForm = ref({ full_name: '', email: '', role: 'member', is_active: true, password: '' })
 
 async function loadUsers() {
   users.value = (await client.get('/api/users')).data
@@ -53,6 +55,39 @@ async function deleteUser(u) {
   userError.value = ''
   try {
     await client.delete(`/api/users/${u.id}`)
+  } catch (e) {
+    userError.value = e.response?.data?.detail || 'Failed'
+  } finally {
+    await loadUsers()
+  }
+}
+function startEdit(u) {
+  userError.value = ''
+  editingId.value = u.id
+  editForm.value = {
+    full_name: u.full_name || '',
+    email: u.email,
+    role: u.role,
+    is_active: u.is_active,
+    password: '', // blank = keep current password
+  }
+}
+function cancelEdit() {
+  editingId.value = null
+}
+async function saveEdit(u) {
+  userError.value = ''
+  const f = editForm.value
+  const payload = {
+    full_name: f.full_name,
+    email: f.email,
+    role: f.role,
+    is_active: f.is_active,
+  }
+  if (f.password) payload.password = f.password // only change password when provided
+  try {
+    await client.patch(`/api/users/${u.id}`, payload)
+    editingId.value = null
   } catch (e) {
     userError.value = e.response?.data?.detail || 'Failed'
   } finally {
@@ -260,12 +295,12 @@ watch(() => board.activeId, () => {
     <div class="card" v-if="auth.isAdmin" style="margin-bottom:16px">
       <h3 style="margin-top:0">Add User</h3>
       <div class="row">
-        <input v-model="newUser.username" placeholder="username" />
-        <input v-model="newUser.email" placeholder="email" />
-        <input v-model="newUser.full_name" placeholder="full name" />
+        <input v-model="newUser.username" placeholder="username" autocomplete="off" />
+        <input v-model="newUser.email" placeholder="email" autocomplete="off" />
+        <input v-model="newUser.full_name" placeholder="full name" autocomplete="off" />
       </div>
       <div class="row" style="margin-top:10px">
-        <input v-model="newUser.password" type="password" placeholder="password (min 6)" />
+        <input v-model="newUser.password" type="password" placeholder="password (min 6)" autocomplete="new-password" />
         <select v-model="newUser.role">
           <option value="admin">admin</option>
           <option value="manager">manager</option>
@@ -281,20 +316,67 @@ watch(() => board.activeId, () => {
       <table>
         <thead><tr><th>Username</th><th>Email</th><th>Role</th><th>Active</th><th></th></tr></thead>
         <tbody>
-          <tr v-for="u in users" :key="u.id">
-            <td>{{ u.full_name || u.username }}<br /><small style="color:var(--muted)">{{ u.username }}</small></td>
-            <td>{{ u.email }}</td>
-            <td>
-              <select :value="u.role" :disabled="!auth.isAdmin" @change="updateRole(u, $event.target.value)">
-                <option value="admin">admin</option>
-                <option value="manager">manager</option>
-                <option value="member">member</option>
-                <option value="viewer">viewer</option>
-              </select>
-            </td>
-            <td><button class="ghost" :disabled="!auth.isAdmin" @click="toggleActive(u)">{{ u.is_active ? 'Yes' : 'No' }}</button></td>
-            <td><button v-if="auth.isAdmin" class="danger" @click="deleteUser(u)">Delete</button></td>
-          </tr>
+          <template v-for="u in users" :key="u.id">
+            <tr>
+              <td>{{ u.full_name || u.username }}<br /><small style="color:var(--muted)">{{ u.username }}</small></td>
+              <td>{{ u.email }}</td>
+              <td>
+                <select :value="u.role" :disabled="!auth.isAdmin" @change="updateRole(u, $event.target.value)">
+                  <option value="admin">admin</option>
+                  <option value="manager">manager</option>
+                  <option value="member">member</option>
+                  <option value="viewer">viewer</option>
+                </select>
+              </td>
+              <td><button class="ghost" :disabled="!auth.isAdmin" @click="toggleActive(u)">{{ u.is_active ? 'Yes' : 'No' }}</button></td>
+              <td style="white-space:nowrap">
+                <button v-if="auth.isAdmin" class="ghost" @click="editingId === u.id ? cancelEdit() : startEdit(u)">
+                  {{ editingId === u.id ? 'Close' : 'Edit' }}
+                </button>
+                <button v-if="auth.isAdmin" class="danger" @click="deleteUser(u)">Delete</button>
+              </td>
+            </tr>
+            <tr v-if="editingId === u.id">
+              <td colspan="5">
+                <div class="card" style="background:var(--col-bg)">
+                  <div class="row">
+                    <label style="flex:1">Full name
+                      <input v-model="editForm.full_name" autocomplete="off" />
+                    </label>
+                    <label style="flex:1">Email
+                      <input v-model="editForm.email" type="email" autocomplete="off" />
+                    </label>
+                  </div>
+                  <div class="row" style="margin-top:10px">
+                    <label style="flex:1">Role
+                      <select v-model="editForm.role">
+                        <option value="admin">admin</option>
+                        <option value="manager">manager</option>
+                        <option value="member">member</option>
+                        <option value="viewer">viewer</option>
+                      </select>
+                    </label>
+                    <label style="flex:1">Active
+                      <select v-model="editForm.is_active">
+                        <option :value="true">Yes</option>
+                        <option :value="false">No</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="row" style="margin-top:10px">
+                    <label style="flex:1">New password <small style="color:var(--muted)">(leave blank to keep current)</small>
+                      <input v-model="editForm.password" type="password" placeholder="new password (min 6)" autocomplete="new-password" />
+                    </label>
+                  </div>
+                  <div class="row" style="margin-top:10px;align-items:center">
+                    <button @click="saveEdit(u)">Save changes</button>
+                    <button class="ghost" @click="cancelEdit">Cancel</button>
+                    <small style="color:var(--muted)">Username <code>{{ u.username }}</code> can't be changed</small>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          </template>
         </tbody>
       </table>
     </div>
